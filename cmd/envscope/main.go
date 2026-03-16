@@ -1,15 +1,8 @@
-// Copyright 2026 Stanislav Senotrusov
-//
-// This work is dual-licensed under the Apache License, Version 2.0
-// and the MIT License. Refer to the LICENSE file in the top-level directory
-// for the full license terms.
-//
-// SPDX-License-Identifier: Apache-2.0 OR MIT
-
 package main
 
 import (
 	"bufio"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,47 +12,59 @@ import (
 
 // EnvVar represents a parsed environment variable configuration.
 type EnvVar struct {
-	Name    string
-	Value   string
-	Prepend bool
-	IsPath  bool
+	Name      string
+	Value     string
+	Prepend   bool
+	IsPath    bool
+	IsDynamic bool
+	Cache     bool
 }
 
-// Zone groups multiple paths that share the exact same variable definitions.
+// Zone represents a single path and its variable definitions.
 type Zone struct {
-	Paths []string
-	Vars  []EnvVar
+	Path     string
+	ID       string
+	ParentID string
+	Vars     []EnvVar
 }
 
 // main coordinates the initialization, parsing, and bash output generation.
 func main() {
-	if len(os.Args) < 3 || os.Args[1] != "hook" || os.Args[2] != "bash" {
-		fmt.Fprintln(os.Stderr, "Usage: envscope hook bash")
+	configFlag := flag.String("c", "", "path to the configuration file")
+	reportFlag := flag.Bool("reportnames", false, "report variable changes to stderr")
+	flag.Parse()
+
+	args := flag.Args()
+	if len(args) < 2 || args[0] != "hook" || args[1] != "bash" {
+		fmt.Fprintln(os.Stderr, "envscope: Usage: envscope [-c config] [-reportnames] hook bash")
 		os.Exit(1)
 	}
 
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error getting home dir: %v\n", err)
+		fmt.Fprintf(os.Stderr, "envscope: error getting home dir: %v\n", err)
 		os.Exit(1)
 	}
 
-	configPath := filepath.Join(homeDir, ".config", "envscope", "main.conf")
+	configPath := *configFlag
+	if configPath == "" {
+		configPath = filepath.Join(homeDir, ".config", "envscope", "main.conf")
+	} else {
+		configPath = expandPath(configPath, homeDir)
+	}
+
 	zones, allVars, err := parseConfig(configPath, homeDir)
 	if err != nil {
-		// If file doesn't exist, exit silently so it doesn't break shell startup
-		if os.IsNotExist(err) {
-			os.Exit(0)
-		}
-		fmt.Fprintf(os.Stderr, "Error parsing config: %v\n", err)
+		fmt.Fprintf(os.Stderr, "envscope: error parsing config: %v\n", err)
 		os.Exit(1)
 	}
 
-	generateBash(zones, allVars)
+	generateBash(zones, allVars, *reportFlag)
 }
 
-// parseConfig reads the envscope configuration and constructs Zone definitions.
-func parseConfig(configPath, homeDir string) ([]Zone, map[string]bool, error) {
+// parseConfig reads the envscope configuration, constructs Zone definitions,
+// and builds the parent-child hierarchy between them.
+func parseConfig(configPath, homeDir string) ([]Zone, []string, error) {
 	file, err := os.Open(configPath)
 	if err != nil {
 		return nil, nil, err
@@ -67,39 +72,75 @@ func parseConfig(configPath, homeDir string) ([]Zone, map[string]bool, error) {
 	defer file.Close()
 
 	var zones []Zone
-	var currentPaths []string
+	var currentPath string
 	var currentVars []EnvVar
-	allVars := make(map[string]bool)
+	var allVars []string
+	seenVars := make(map[string]bool)
 
+	lineNum := 0
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
-		line := strings.TrimRight(scanner.Text(), "\r\n")
-		if len(strings.TrimSpace(line)) == 0 {
+		lineNum++
+		line := scanner.Text()
+		trimmed := strings.TrimSpace(line)
+		if len(trimmed) == 0 || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
 
 		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
-			parseVarLine(line, &currentVars, allVars)
-		} else {
-			if len(currentVars) > 0 {
-				zones = append(zones, Zone{Paths: currentPaths, Vars: currentVars})
-				currentPaths = []string{}
-				currentVars = []EnvVar{}
+			if currentPath != "" {
+				if err := parseVarLine(trimmed, homeDir, &currentVars, &allVars, seenVars); err != nil {
+					return nil, nil, fmt.Errorf("line %d: %w", lineNum, err)
+				}
+			} else {
+				return nil, nil, fmt.Errorf("line %d: variable definition without a preceding zone path: %q", lineNum, trimmed)
 			}
-			currentPaths = append(currentPaths, expandPath(line, homeDir))
+		} else {
+			if currentPath != "" && len(currentVars) > 0 {
+				zones = append(zones, Zone{Path: currentPath, Vars: currentVars})
+			}
+			currentPath = expandPath(trimmed, homeDir)
+			currentVars = []EnvVar{}
 		}
 	}
 
-	if len(currentPaths) > 0 && len(currentVars) > 0 {
-		zones = append(zones, Zone{Paths: currentPaths, Vars: currentVars})
+	if err := scanner.Err(); err != nil {
+		return nil, nil, err
 	}
 
-	return zones, allVars, scanner.Err()
+	if currentPath != "" && len(currentVars) > 0 {
+		zones = append(zones, Zone{Path: currentPath, Vars: currentVars})
+	}
+
+	// Sort by path length to make parent-finding efficient and correct.
+	sort.Slice(zones, func(i, j int) bool {
+		return len(zones[i].Path) < len(zones[j].Path)
+	})
+
+	// Assign IDs and establish parent-child relationships.
+	for i := range zones {
+		zones[i].ID = fmt.Sprintf("zone_%d", i)
+		bestParentIdx := -1
+		// Find the longest path among preceding zones that is a prefix.
+		for j := 0; j < i; j++ {
+			if strings.HasPrefix(zones[i].Path, zones[j].Path+"/") {
+				if bestParentIdx == -1 || len(zones[j].Path) > len(zones[bestParentIdx].Path) {
+					bestParentIdx = j
+				}
+			}
+		}
+		if bestParentIdx != -1 {
+			zones[i].ParentID = zones[bestParentIdx].ID
+		}
+	}
+
+	return zones, allVars, nil
 }
 
-// parseVarLine extracts a single variable's configurations including its prepend modifiers.
-func parseVarLine(line string, currentVars *[]EnvVar, allVars map[string]bool) {
-	line = strings.TrimSpace(line)
+// parseVarLine extracts a single variable's configurations, parsing names, plain text strings,
+// and dynamic commands safely, including cache directives from comments.
+func parseVarLine(line, homeDir string, currentVars *[]EnvVar, allVars *[]string, seenVars map[string]bool) error {
+	origLine := line
 	prepend := false
 	if strings.HasPrefix(line, "+") {
 		prepend = true
@@ -107,21 +148,83 @@ func parseVarLine(line string, currentVars *[]EnvVar, allVars map[string]bool) {
 	}
 
 	parts := strings.SplitN(line, "=", 2)
-	if len(parts) == 2 {
-		name := parts[0]
-		val := parts[1]
-		if strings.HasPrefix(val, "~/") {
-			val = "$HOME/" + val[2:]
-		}
-
-		*currentVars = append(*currentVars, EnvVar{
-			Name:    name,
-			Value:   val,
-			Prepend: prepend,
-			IsPath:  name == "PATH",
-		})
-		allVars[name] = true
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid variable definition (missing '='): %q", origLine)
 	}
+
+	name := strings.TrimSpace(parts[0])
+	if !isValidVarName(name) {
+		return fmt.Errorf("invalid variable name: %q", origLine)
+	}
+
+	valWithComment := parts[1]
+	val := valWithComment
+	cache := false
+
+	if commentIndex := strings.Index(valWithComment, "#"); commentIndex > -1 {
+		commentPart := strings.TrimSpace(valWithComment[commentIndex+1:])
+		if commentPart == "cache" {
+			cache = true
+			val = valWithComment[:commentIndex]
+		}
+	}
+
+	val = strings.TrimSpace(val)
+
+	if strings.HasPrefix(val, "\"") && strings.HasSuffix(val, "\"") {
+		return fmt.Errorf("complex shell syntax in double quotes is not supported yet: %q", origLine)
+	}
+
+	var isDynamic bool
+	var processedVal string
+
+	if strings.HasPrefix(val, "$(") && strings.HasSuffix(val, ")") {
+		isDynamic = true
+		processedVal = val[2 : len(val)-1]
+	} else {
+		isDynamic = false
+		processedVal = expandTilde(val, homeDir, name == "PATH")
+	}
+
+	*currentVars = append(*currentVars, EnvVar{
+		Name:      name,
+		Value:     processedVal,
+		Prepend:   prepend,
+		IsPath:    name == "PATH",
+		IsDynamic: isDynamic,
+		Cache:     cache,
+	})
+
+	if !seenVars[name] {
+		seenVars[name] = true
+		*allVars = append(*allVars, name)
+	}
+
+	return nil
+}
+
+// isValidVarName checks if a string is a valid POSIX/Bash environment variable name.
+func isValidVarName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i, r := range name {
+		if i == 0 && !isAlphaOrUnderscore(r) {
+			return false
+		}
+		if i > 0 && !isAlphaNumOrUnderscore(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func isAlphaOrUnderscore(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '_'
+}
+
+func isAlphaNumOrUnderscore(r rune) bool {
+	return isAlphaOrUnderscore(r) || (r >= '0' && r <= '9')
 }
 
 // expandPath translates the tilde prefix into an absolute user home directory path.
@@ -132,14 +235,43 @@ func expandPath(path, homeDir string) string {
 	return path
 }
 
+// expandTilde performs shell-like tilde expansion for a variable value.
+// It expands a leading tilde (~) or tilde-slash (~/) to the user's home directory.
+// If isPath is true, it also expands tildes that immediately follow a colon (:)
+// to support PATH-style lists.
+func expandTilde(val, homeDir string, isPath bool) string {
+	expand := func(s string) string {
+		if s == "~" {
+			return homeDir
+		}
+		if strings.HasPrefix(s, "~/") {
+			return homeDir + s[1:]
+		}
+		return s
+	}
+
+	if isPath {
+		parts := strings.Split(val, ":")
+		for i, p := range parts {
+			parts[i] = expand(p)
+		}
+		return strings.Join(parts, ":")
+	}
+
+	return expand(val)
+}
+
 // generateBash drives the construction of the Bash shell hook script output.
-func generateBash(zones []Zone, allVars map[string]bool) {
+func generateBash(zones []Zone, allVars []string, report bool) {
 	var builder strings.Builder
 
 	generateBashHeader(&builder)
-	generateSaveRestoreFunctions(&builder, allVars)
-	generateApplyFunction(&builder, zones, allVars)
-	generateHookFunction(&builder, zones)
+	generateSaveFunction(&builder, allVars)
+	generateRestoreFunction(&builder, allVars, report)
+	generateParentMap(&builder, zones)
+	generateApplyOneZoneFunction(&builder, zones, report)
+	generateApplyStackFunction(&builder)
+	generateHookFunction(&builder, zones, allVars)
 
 	fmt.Print(builder.String())
 }
@@ -149,11 +281,11 @@ func generateBashHeader(builder *strings.Builder) {
 	builder.WriteString("__ENVSCP_ZONE=${__ENVSCP_ZONE:-\"NONE\"}\n\n")
 }
 
-// generateSaveRestoreFunctions creates isolated Bash functions that store outer state
-// and revert variables to that exact layout when exiting zones, avoiding `set -u` faults.
-func generateSaveRestoreFunctions(builder *strings.Builder, allVars map[string]bool) {
+// generateSaveFunction creates a Bash function to store the original environment
+// state before any modifications are applied.
+func generateSaveFunction(builder *strings.Builder, allVars []string) {
 	builder.WriteString("__envscope_save_outer() {\n")
-	for v := range allVars {
+	for _, v := range allVars {
 		builder.WriteString(fmt.Sprintf(`  if [[ -n "${%s+x}" ]]; then
     __ENVSCP_OUTER_HAD_%s=1
     __ENVSCP_OUTER_%s="$%s"
@@ -163,92 +295,149 @@ func generateSaveRestoreFunctions(builder *strings.Builder, allVars map[string]b
 `, v, v, v, v, v))
 	}
 	builder.WriteString("}\n\n")
+}
 
+// generateRestoreFunction creates a Bash function that reverts variables to their
+// original "outer" state, optionally reporting changes to stderr.
+func generateRestoreFunction(builder *strings.Builder, allVars []string, report bool) {
 	builder.WriteString("__envscope_restore_outer() {\n")
-	for v := range allVars {
+	for _, v := range allVars {
 		builder.WriteString(fmt.Sprintf(`  if [[ "${%s:-}" == "${__ENVSCP_LAST_%s:-}" ]]; then
     if [[ ${__ENVSCP_OUTER_HAD_%s:-0} -eq 1 ]]; then
       export %s="${__ENVSCP_OUTER_%s:-}"
     else
       unset %s
-    fi
-  fi
 `, v, v, v, v, v, v))
+		if report {
+			builder.WriteString(fmt.Sprintf("      echo \"envscope: removed %s\" >&2\n", v))
+		}
+		builder.WriteString("    fi\n  fi\n")
 	}
 	builder.WriteString("}\n\n")
 }
 
-// generateApplyFunction constructs the bash `case` structure used to project
-// nested paths onto variable modifications safely supporting prepends.
-func generateApplyFunction(builder *strings.Builder, zones []Zone, allVars map[string]bool) {
-	builder.WriteString("__envscope_apply_zone() {\n")
+// generateParentMap defines a Bash associative array to represent the zone hierarchy.
+func generateParentMap(builder *strings.Builder, zones []Zone) {
+	builder.WriteString("declare -A __ENVSCP_PARENT=(\n")
+	for _, z := range zones {
+		if z.ParentID != "" {
+			builder.WriteString(fmt.Sprintf("  [%s]=\"%s\"\n", z.ID, z.ParentID))
+		}
+	}
+	builder.WriteString(")\n\n")
+}
+
+// generateApplyOneZoneFunction constructs the bash `case` structure for applying
+// the variables of a single zone, with optional reporting of added variables.
+func generateApplyOneZoneFunction(builder *strings.Builder, zones []Zone, report bool) {
+	builder.WriteString("__envscope_apply_one_zone() {\n")
 	builder.WriteString("  local zone=\"$1\"\n")
 	builder.WriteString("  case \"$zone\" in\n")
-	for i, z := range zones {
-		builder.WriteString(fmt.Sprintf("    zone_%d)\n", i))
+	for _, z := range zones {
+		builder.WriteString(fmt.Sprintf("    %s)\n", z.ID))
 		for _, ev := range z.Vars {
-			// Using `${VAR:-}` handles unbound prepends accurately without `set -u` triggering.
+			valueExpression := generateValueExpression(builder, z.ID, ev)
 			if ev.Prepend {
+				sep := ""
 				if ev.IsPath {
-					builder.WriteString(fmt.Sprintf("      export %s=\"%s:${%s:-}\"\n", ev.Name, ev.Value, ev.Name))
-				} else {
-					builder.WriteString(fmt.Sprintf("      export %s=\"%s${%s:-}\"\n", ev.Name, ev.Value, ev.Name))
+					sep = ":"
 				}
+				builder.WriteString(fmt.Sprintf("      export %s=%s%s\"${%s:-}\"\n", ev.Name, valueExpression, sep, ev.Name))
 			} else {
-				builder.WriteString(fmt.Sprintf("      export %s=\"%s\"\n", ev.Name, ev.Value))
+				builder.WriteString(fmt.Sprintf("      export %s=%s\n", ev.Name, valueExpression))
+			}
+			if report {
+				builder.WriteString(fmt.Sprintf("      echo \"envscope: added %s\" >&2\n", ev.Name))
 			}
 		}
-		builder.WriteString("      ;; \n")
+		builder.WriteString("      ;;\n")
 	}
-	builder.WriteString("  esac\n\n")
-
-	// Log precisely what envscope enacted to separate user changes from tool changes.
-	for v := range allVars {
-		builder.WriteString(fmt.Sprintf("  __ENVSCP_LAST_%s=\"${%s:-}\"\n", v, v))
-	}
+	builder.WriteString("  esac\n")
 	builder.WriteString("}\n\n")
+}
+
+// escapeSingleQuotes implements safe string enclosure for Bash by replacing
+// any single quotes with an escaped version and wrapping the result.
+func escapeSingleQuotes(s string) string {
+	escaped := strings.ReplaceAll(s, "'", "'\\''")
+	return fmt.Sprintf("'%s'", escaped)
+}
+
+// generateValueExpression determines how a variable value should be expressed in Bash.
+// Plain text is strictly single-quoted to prevent unintended shell evaluation.
+// Dynamic commands are safely delivered via $(eval '...').
+func generateValueExpression(builder *strings.Builder, zoneID string, ev EnvVar) string {
+	escapedVal := escapeSingleQuotes(ev.Value)
+	var expr string
+	if ev.IsDynamic {
+		expr = fmt.Sprintf("$(eval %s)", escapedVal)
+	} else {
+		expr = escapedVal
+	}
+
+	if ev.IsDynamic && ev.Cache {
+		cacheVar := fmt.Sprintf("__ENVSCP_CACHE_%s_%s", zoneID, ev.Name)
+		builder.WriteString(fmt.Sprintf("      if [[ -z \"${%s:-}\" ]]; then\n", cacheVar))
+		builder.WriteString(fmt.Sprintf("        %s=%s\n", cacheVar, expr))
+		builder.WriteString("      fi\n")
+		return fmt.Sprintf("\"${%s}\"", cacheVar)
+	}
+	return expr
+}
+
+// generateApplyStackFunction creates a Bash function that applies all variables
+// from a zone's ancestors down to the zone itself.
+func generateApplyStackFunction(builder *strings.Builder) {
+	builder.WriteString(`__envscope_apply_stack() {
+  local zone_id="$1"
+  local stack=()
+  while [[ -n "$zone_id" && "$zone_id" != "NONE" ]]; do
+    stack=("$zone_id" "${stack[@]}")
+    zone_id="${__ENVSCP_PARENT[$zone_id]:-NONE}"
+  done
+  for z in "${stack[@]}"; do
+    __envscope_apply_one_zone "$z"
+  done
+}
+
+`)
 }
 
 // generateHookFunction produces the runtime prompt trigger evaluation loop
 // implementing longest-match nested path sorting priority.
-func generateHookFunction(builder *strings.Builder, zones []Zone) {
-	type PathMatch struct {
-		Path   string
-		ZoneID string
-	}
-	var matches []PathMatch
-	for i, z := range zones {
-		for _, p := range z.Paths {
-			matches = append(matches, PathMatch{Path: p, ZoneID: fmt.Sprintf("zone_%d", i)})
-		}
-	}
+func generateHookFunction(builder *strings.Builder, zones []Zone, allVars []string) {
 	// Sort longest paths first to give deepest nested folders priority.
-	sort.Slice(matches, func(i, j int) bool {
-		return len(matches[i].Path) > len(matches[j].Path)
+	sort.Slice(zones, func(i, j int) bool {
+		return len(zones[i].Path) > len(zones[j].Path)
 	})
 
 	builder.WriteString("__envscope_hook() {\n")
 	builder.WriteString("  local target_zone=\"NONE\"\n")
 	builder.WriteString("  case \"$PWD\" in\n")
-	for _, m := range matches {
-		builder.WriteString(fmt.Sprintf("    \"%s\" | \"%s/\"* ) target_zone=\"%s\" ;;\n", m.Path, m.Path, m.ZoneID))
+	for _, z := range zones {
+		builder.WriteString(fmt.Sprintf("    \"%s\" | \"%s/\"* ) target_zone=\"%s\" ;;\n", z.Path, z.Path, z.ID))
 	}
 	builder.WriteString("  esac\n\n")
 
-	// Evaluates the current zone versus the known state, calling out to save/restore logic
-	// seamlessly without needing a separate IN_ZONE tracker boolean.
-	builder.WriteString(`  if [[ "$target_zone" != "NONE" ]]; then
-    if [[ "${__ENVSCP_ZONE:-NONE}" == "NONE" ]]; then
-      __envscope_save_outer
-      __envscope_apply_zone "$target_zone"
-    elif [[ "$target_zone" != "${__ENVSCP_ZONE:-NONE}" ]]; then
+	// Prepares the snippet that records the final state of all managed variables.
+	var lastVarTracker strings.Builder
+	for _, v := range allVars {
+		lastVarTracker.WriteString(fmt.Sprintf("  __ENVSCP_LAST_%s=\"${%s:-}\"\n", v, v))
+	}
+
+	// Evaluates the current zone versus the known state, calling out to save/restore/apply logic.
+	builder.WriteString(fmt.Sprintf(`  if [[ "$target_zone" != "${__ENVSCP_ZONE:-NONE}" ]]; then
+    if [[ "${__ENVSCP_ZONE:-NONE}" != "NONE" ]]; then
       __envscope_restore_outer
-      __envscope_apply_zone "$target_zone"
+    fi
+    if [[ "$target_zone" != "NONE" ]]; then
+      if [[ "${__ENVSCP_ZONE:-NONE}" == "NONE" ]]; then
+        __envscope_save_outer
+      fi
+      __envscope_apply_stack "$target_zone"
+%s
     fi
     __ENVSCP_ZONE="$target_zone"
-  elif [[ "${__ENVSCP_ZONE:-NONE}" != "NONE" ]]; then
-    __envscope_restore_outer
-    __ENVSCP_ZONE="NONE"
   fi
 }
 
@@ -260,5 +449,5 @@ if [[ ! "${PROMPT_COMMAND:-}" =~ __envscope_hook ]] && [[ "${PROMPT_COMMAND[*]:-
     PROMPT_COMMAND="${PROMPT_COMMAND:+${PROMPT_COMMAND}; }__envscope_hook"
   fi
 fi
-`)
+`, lastVarTracker.String()))
 }

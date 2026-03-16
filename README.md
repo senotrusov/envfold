@@ -10,37 +10,37 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 
 # envscope
 
-`envscope` is a static environment manager for Bash. It allows you to define directory-specific environment variables in a single, centralized configuration file.
+`envscope` is a environment variable manager that lets you define directory-specific variables in a single, centralized configuration file.
 
-Unlike `direnv`, which looks for `.envrc` files in every directory you visit, `envscope` uses a "compiled" approach. It parses your global configuration and generates highly optimized Bash code that hooks into your prompt. This keeps your project folders clean of hidden configuration files.
+Unlike many environment managers that search for `.env` files in every directory you enter, `envscope` takes a different approach. It parses your global configuration once when the shell starts and generates optimized shell code that integrates with your prompt. This keeps project directories free of hidden configuration files while reducing runtime complexity.
 
 ## Features
 
-- **Centralized Config:** Manage all directory rules in `~/.config/envscope/main.conf`.
-- **Fast:** Once loaded, it runs as pure Bash logic. No external binaries are called when changing directories.
-- **Hierarchical:** Supports nested path matching (deepest directory wins).
-- **Robust:** Compatible with `set -euo pipefail`.
-- **Prepend Support:** Easily prepend to `PATH` or other variables using the `+` prefix.
-- **Override Respect:** If you manually `export` a variable while inside a managed zone, `envscope` detects the manual change and will not overwrite it when you leave.
+* **Centralized configuration:** Manage all directory rules in `~/.config/envscope/main.conf`. A different path can be specified via an option.
+* **Fast:** After initialization, everything runs as pure Bash logic. No external binaries are invoked when changing directories, and no processes are spawned unless explicitly requested in the configuration through dynamic variables.
+* **Hierarchical:** Variables automatically inherit from parent directories.
+* **Robust:** Compatible with `set -euo pipefail`.
+* **Prepend support:** Easily prepend values to `PATH` or other variables using the `+` prefix.
+* **Dynamic value caching:** Dynamic expressions evaluated dynamically each time the scope changes by default. You can opt in to caching for expensive commands or commands that require user interaction (for example hardware-backed credential managers) by adding a `# cache` comment.
+* **Override awareness:** If you manually `export` a variable while inside a managed directory, `envscope` detects the change and does not overwrite it when you leave that scope.
 
 ## Installation
 
-1. **Build the binary:**
+1. **Build and install from source:**
 
    ```bash
-   just build
    just install
    ```
 
-2. **Initialize the config:**
-   Create the directory and configuration file:
+2. **Initialize the configuration:**
+   Create the configuration directory and file:
 
    ```bash
    mkdir -p ~/.config/envscope
    touch ~/.config/envscope/main.conf
    ```
 
-3. **Add to your shell:**
+3. **Enable it in your shell:**
    Add the following line to the end of your `~/.bashrc`:
 
    ```bash
@@ -52,16 +52,21 @@ Unlike `direnv`, which looks for `.envrc` files in every directory you visit, `e
 The configuration file is located at `~/.config/envscope/main.conf`.
 
 - **Paths:** Start at the beginning of the line. `~` is automatically expanded to your home directory.
-- **Variables:** Must be indented with at least one space or tab.
+- **Variables:** Must be indented with at least one space or tab. Variables are validated to ensure they conform to POSIX standard naming conventions (`^[a-zA-Z_][a-zA-Z0-9_]*$`).
 - **Prepending:** Use `+VAR=value` to prepend to an existing variable. If the variable is `PATH`, it automatically handles the `:` separator.
-- **Dynamic Values:** You can use Bash command substitution like `$(command)`.
+- **Values and Quoting:**
+  - **Plain text:** Values are treated as literal strings and do not require surrounding quotes. They are safely enclosed in single quotes when executed, preserving spaces and special characters. Double quotes around the entire value (e.g., `VAR="val"`) are not currently supported and will return an error.
+  - **Tilde Expansion:** A tilde (`~`) at the beginning of an unquoted value expands to your home directory (e.g., `VAR=~/foo` becomes `/home/user/foo`). Tildes in the middle of a string are treated literally (`VAR=a~/foo`).
+  - **PATH Special Case:** For the `PATH` variable specifically, tildes that immediately follow a colon `:` are also expanded, supporting standard list formats like `PATH=~/bin:/usr/bin:~/.local/bin`.
+  - **Dynamic Values:** You can evaluate Bash commands by wrapping the *entire* value in `$()`, such as `$(command)`. These are safely evaluated at runtime.
+  - **Caching:** By default, dynamic values are re-evaluated on each scope change. To cache the result for the current shell session, add a `# cache` comment at the end of the line.
 
 ### Example `main.conf`
 
 ```text
 ~/projects/work
   PGDATABASE=work_db
-  API_KEY=secret_token
+  API_KEY=$(passage show my/work-api-key) # cache
 
 ~/projects/work/microservice-a
   PGDATABASE=service_a_db
@@ -69,18 +74,22 @@ The configuration file is located at `~/.config/envscope/main.conf`.
 
 ~/sandbox
   TEMP_ENV=true
-  API_KEY=$(passage show my/secrets)
 ```
+
+In the example above, when you `cd` into `~/projects/work/microservice-a`:
+- `PGDATABASE` will be `service_a_db` (overriding the parent).
+- `API_KEY` will be inherited from `~/projects/work`. Because of the `# cache` comment, the `passage` command will only be run once per shell session.
+- `PATH` will be prepended with the new `bin` directory.
 
 ## How it works
 
-1. **Startup:** When you open a new shell, `envscope hook bash` runs. It reads your `main.conf` and generates a series of Bash functions and a `case` statement containing all your managed paths.
-2. **Tracking:** Every time your prompt is displayed (after a `cd` or a command), the `__envscope_hook` function checks your current `$PWD` against the generated `case` statement.
+1. **Startup:** When you open a new shell, `envscope hook` runs. It reads your `main.conf`, determines the parent-child relationships between your paths, and generates a series of shell functions.
+2. **Tracking:** Every time your prompt is displayed, the `__envscope_hook` function checks `$PWD` against the generated path rules to find the most specific match.
 3. **State Management:**
-   - When entering a zone, it saves the "outer" value of any variable it is about to change.
-   - When moving between nested zones, it restores the outer value before applying the new zone's variables to ensure a clean state.
-   - When leaving all zones, it restores variables to their original values (or unsets them if they didn't exist).
-4. **Safety:** If the current value of a variable does not match the value `envscope` last set, the tool assumes you have manually changed it and refuses to touch it, preserving your manual overrides.
+   - When entering a managed directory for the first time, it saves the "outer" (original) state of any variable it is about to change.
+   - When changing directories, it completely restores the outer environment and then re-applies the full stack of variables for the new location, from the top-level parent down to the most specific child.
+   - When leaving all managed directories, it restores all variables to their original values (or unsets them if they didn't exist).
+4. **Safety:** If the current value of a variable does not match the value `envscope` last set, the tool assumes you have manually changed it and refuses to touch it upon leaving a zone, preserving your manual overrides.
 
 ## License
 
