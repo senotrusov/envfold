@@ -38,7 +38,6 @@ format:
 # Output key project file paths for LLM prompt context
 context:
   #!/usr/bin/env bash
-  echo '$ tree'
   echo '$ just test'
   printf "%s\n" \
     cmd/{{project}}/*.go \
