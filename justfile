@@ -59,8 +59,8 @@ test: build
     bin/envscope -c test/test.conf "$@" | sed "s|${HOME}/|/home/user/|g"
   }
 
-  generate hook bash > test/hook-reportnames.bash
-  generate -reportnames hook bash > test/hook.bash
+  generate hook bash > test/hook.bash
+  generate -reportnames hook bash > test/hook-reportnames.bash
 
 # Start a nested Bash shell with the test configuration hook pre-loaded
 test-shell: build
