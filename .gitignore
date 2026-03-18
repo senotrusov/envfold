@@ -1,4 +1,6 @@
 /bin
 /dist
 /test/.bash_history
+/test/.histfile
+/test/.local/share/fish/fish_history
 /VERSION
