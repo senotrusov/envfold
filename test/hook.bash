@@ -64,9 +64,9 @@ __envscope_apply_one_zone() {
     zone_1)
       export TESTROOT='testroot-value'
       export LOCALVAR='test'
-      export DATE_VAR=$(eval 'echo $RANDOM')
+      export DATE_VAR=$(eval 'od -vAn -N4 -tx4 < /dev/urandom')
       if [[ -z "${__ENVSCP_C[0]:-}" ]]; then
-        __ENVSCP_C[0]=$(eval 'echo $RANDOM')
+        __ENVSCP_C[0]=$(eval 'od -vAn -N4 -tx4 < /dev/urandom')
       fi
       export DATE_VAR_CACHED="${__ENVSCP_C[0]}"
       export QUOTED_VAR='val'\''withquote'

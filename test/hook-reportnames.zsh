@@ -1,7 +1,7 @@
-__ENVSCP_ZONE=${__ENVSCP_ZONE:-"NONE"}
-declare -a __ENVSCP_C 2>/dev/null || true
+typeset -g __ENVSCP_ZONE=${__ENVSCP_ZONE:-"NONE"}
+typeset -g -a __ENVSCP_C 2>/dev/null || true
 
-declare -a __ENVSCP_VARS=(
+typeset -g -a __ENVSCP_VARS=(
   "TESTROOT"
   "LOCALVAR"
   "DATE_VAR"
@@ -21,11 +21,12 @@ declare -a __ENVSCP_VARS=(
 __envscope_save_outer() {
   __ENVSCP_H=()
   __ENVSCP_O=()
-  for i in "${!__ENVSCP_VARS[@]}"; do
+  local i
+  for i in {1..${#__ENVSCP_VARS[@]}}; do
     local v="${__ENVSCP_VARS[$i]}"
-    if [[ -n "${!v+x}" ]]; then
+    if [[ -n "${(P)v+x}" ]]; then
       __ENVSCP_H[$i]=1
-      __ENVSCP_O[$i]="${!v}"
+      __ENVSCP_O[$i]="${(P)v}"
     else
       __ENVSCP_H[$i]=0
     fi
@@ -33,13 +34,14 @@ __envscope_save_outer() {
 }
 
 __envscope_restore_outer() {
-  for i in "${!__ENVSCP_VARS[@]}"; do
+  local i
+  for i in {1..${#__ENVSCP_VARS[@]}}; do
     local v="${__ENVSCP_VARS[$i]}"
-    if [[ "${!v:-}" == "${__ENVSCP_L[$i]:-}" ]]; then
+    if [[ "${(P)v:-}" == "${__ENVSCP_L[$i]:-}" ]]; then
       if [[ ${__ENVSCP_H[$i]:-0} -eq 1 ]]; then
         export "$v"="${__ENVSCP_O[$i]:-}"
       else
-        if [[ -n "${!v+x}" ]]; then
+        if [[ -n "${(P)v+x}" ]]; then
           unset "$v"
           echo "envscope: removed $v" >&2
         fi
@@ -48,7 +50,7 @@ __envscope_restore_outer() {
   done
 }
 
-declare -A __ENVSCP_PARENT=(
+typeset -g -A __ENVSCP_PARENT=(
   [zone_1]="zone_0"
   [zone_2]="zone_1"
   [zone_3]="zone_1"
@@ -72,10 +74,10 @@ __envscope_apply_one_zone() {
       echo "envscope: added LOCALVAR" >&2
       export DATE_VAR=$(eval 'od -vAn -N4 -tx4 < /dev/urandom')
       echo "envscope: added DATE_VAR" >&2
-      if [[ -z "${__ENVSCP_C[0]:-}" ]]; then
-        __ENVSCP_C[0]=$(eval 'od -vAn -N4 -tx4 < /dev/urandom')
+      if [[ -z "${__ENVSCP_C[1]:-}" ]]; then
+        __ENVSCP_C[1]=$(eval 'od -vAn -N4 -tx4 < /dev/urandom')
       fi
-      export DATE_VAR_CACHED="${__ENVSCP_C[0]}"
+      export DATE_VAR_CACHED="${__ENVSCP_C[1]}"
       echo "envscope: added DATE_VAR_CACHED" >&2
       export QUOTED_VAR='val'\''withquote'
       echo "envscope: added QUOTED_VAR" >&2
@@ -128,6 +130,7 @@ __envscope_apply_stack() {
     stack=("$zone_id" "${stack[@]}")
     zone_id="${__ENVSCP_PARENT[$zone_id]:-NONE}"
   done
+  local z
   for z in "${stack[@]}"; do
     __envscope_apply_one_zone "$z"
   done
@@ -158,9 +161,10 @@ __envscope_hook() {
       fi
       __envscope_apply_stack "$target_zone"
       __ENVSCP_L=()
-      for i in "${!__ENVSCP_VARS[@]}"; do
+      local i
+      for i in {1..${#__ENVSCP_VARS[@]}}; do
         local v="${__ENVSCP_VARS[$i]}"
-        __ENVSCP_L[$i]="${!v:-}"
+        __ENVSCP_L[$i]="${(P)v:-}"
       done
     else
       unset __ENVSCP_L __ENVSCP_O __ENVSCP_H
@@ -169,11 +173,5 @@ __envscope_hook() {
   fi
 }
 
-# Attach to PROMPT_COMMAND using '|| true' to bypass 'set -e' if declare fails.
-if [[ ! "${PROMPT_COMMAND:-}" =~ __envscope_hook ]] && [[ "${PROMPT_COMMAND[*]:-}" != *__envscope_hook* ]]; then
-  if [[ "$(declare -p PROMPT_COMMAND 2>/dev/null || true)" =~ "declare -a" ]]; then
-    PROMPT_COMMAND+=("__envscope_hook")
-  else
-    PROMPT_COMMAND="${PROMPT_COMMAND:+${PROMPT_COMMAND}; }__envscope_hook"
-  fi
-fi
+autoload -Uz add-zsh-hook
+add-zsh-hook precmd __envscope_hook

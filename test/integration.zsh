@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env zsh
 set -euo pipefail
 
 # Set up a mock HOME directory so the ~ expansion in test.conf is predictable
@@ -9,7 +9,7 @@ set +e
 
 FAILURES=0
 
-echo "BASH: Running Error Handling Tests"
+echo "ZSH: Running Error Handling Tests"
 
 # Helper function to assert errors report correctly
 assert_error() {
@@ -18,7 +18,7 @@ assert_error() {
   local expected_err="$3"
   
   local output code
-  output=$(bin/envscope -c "$conf_file" hook bash 2>&1 >/dev/null)
+  output=$(bin/envscope -c "$conf_file" hook zsh 2>&1 >/dev/null)
   code=$?
   
   if [[ $code -eq 0 ]]; then
@@ -38,7 +38,7 @@ assert_error_output_empty() {
   local conf_file="$2"
   
   local stdout_output
-  stdout_output=$(bin/envscope -c "$conf_file" hook bash 2>/dev/null)
+  stdout_output=$(bin/envscope -c "$conf_file" hook zsh 2>/dev/null)
   
   if [[ -n "$stdout_output" ]]; then
     echo "FAIL: $name - expected empty stdout on error, got: $stdout_output"
@@ -87,7 +87,7 @@ assert_empty() {
   fi
 }
 
-echo "BASH: Running Integration Tests"
+echo "ZSH: Running Integration Tests"
 
 # 1. Initialize environment
 mkdir -p "$HOME/other" \
@@ -102,9 +102,9 @@ export PATH="/usr/bin:/bin"
 ORIGINAL_PATH="$PATH"
 
 # Source the generated hook using the newly built binary
-# This simulates bashrc loading.
+# This simulates zshrc loading.
 # The script claims to be `set -u` compatible, which is active here.
-source <(bin/envscope -c test/test.conf hook bash)
+source <(bin/envscope -c test/test.conf hook zsh)
 
 # 2. Outside of any managed zone
 cd "$HOME/other"
@@ -248,9 +248,9 @@ assert_empty "MULTI_VAR restored" "${MULTI_VAR:-}"
 assert_empty "WILDCARD_VAR restored" "${WILDCARD_VAR:-}"
 
 if [[ $FAILURES -gt 0 ]]; then
-  echo "[X] BASH: $FAILURES test(s) failed."
+  echo "[X] ZSH: $FAILURES test(s) failed."
   exit 1
 else
-  echo "[+] BASH: All integration tests passed."
+  echo "[+] ZSH: All integration tests passed."
   exit 0
 fi

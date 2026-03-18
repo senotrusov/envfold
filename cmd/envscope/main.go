@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -30,17 +31,18 @@ type Zone struct {
 	Vars     []EnvVar
 }
 
-// main coordinates the initialization, parsing, and bash output generation.
+// main coordinates the initialization, parsing, and shell output generation.
 func main() {
 	configFlag := flag.String("c", "", "path to the configuration file")
 	reportFlag := flag.Bool("reportvars", false, "report variable changes to stderr")
 	flag.Parse()
 
 	args := flag.Args()
-	if len(args) < 2 || args[0] != "hook" || args[1] != "bash" {
-		fmt.Fprintln(os.Stderr, "envscope: Usage: envscope [-c config] [-reportvars] hook bash")
+	if len(args) < 2 || args[0] != "hook" {
+		fmt.Fprintln(os.Stderr, "envscope: Usage: envscope [-c config] [-reportvars] hook <bash|zsh|fish>")
 		os.Exit(1)
 	}
+	shell := args[1]
 
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -59,7 +61,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	generateBash(zones, allVars, *reportFlag)
+	generateHook(shell, zones, allVars, *reportFlag)
 }
 
 // resolveZonePath resolves a path for a zone definition from the config file.
@@ -304,15 +306,25 @@ func expandTilde(val, homeDir string, isPath bool) string {
 	return expand(val)
 }
 
-// generateBash drives the construction of the Bash shell hook script output.
-func generateBash(zones []Zone, allVars []string, report bool) {
-	var builder strings.Builder
+// getSortedZonesByID returns a new slice of zones sorted numerically by their IDs
+// for deterministic readabilty in maps and static case evaluation points.
+func getSortedZonesByID(zones []Zone) []Zone {
+	sorted := make([]Zone, len(zones))
+	copy(sorted, zones)
+	sort.Slice(sorted, func(i, j int) bool {
+		id1, _ := strconv.Atoi(strings.TrimPrefix(sorted[i].ID, "zone_"))
+		id2, _ := strconv.Atoi(strings.TrimPrefix(sorted[j].ID, "zone_"))
+		return id1 < id2
+	})
+	return sorted
+}
 
-	generateBashHeader(&builder)
-	generateVarsArray(&builder, allVars)
-	generateSaveFunction(&builder)
-	generateRestoreFunction(&builder, report)
-	generateParentMap(&builder, zones)
+// generateHook coordinates caching requirements and triggers shell-specific builders.
+func generateHook(shell string, zones []Zone, allVars []string, report bool) {
+	// Sort longest paths first to give deepest nested folders priority.
+	sort.Slice(zones, func(i, j int) bool {
+		return len(zones[i].Path) > len(zones[j].Path)
+	})
 
 	// Pre-calculate deterministic integer indices for all dynamic cached variables.
 	cacheCounter := 0
@@ -325,23 +337,94 @@ func generateBash(zones []Zone, allVars []string, report bool) {
 		}
 	}
 
-	generateApplyOneZoneFunction(&builder, zones, report)
-	generateApplyStackFunction(&builder)
-	generateHookFunction(&builder, zones)
+	var builder strings.Builder
+
+	switch shell {
+	case "bash":
+		generateBash(&builder, zones, allVars, report)
+	case "zsh":
+		generateZsh(&builder, zones, allVars, report)
+	case "fish":
+		generateFish(&builder, zones, allVars, report)
+	default:
+		fmt.Fprintf(os.Stderr, "envscope: unsupported shell %q\n", shell)
+		os.Exit(1)
+	}
 
 	fmt.Print(builder.String())
 }
 
-// generateBashHeader sets up initial runtime states resilient against `set -u`
-// and creates the global indexed cache array.
+// escapeSingleQuotes implements safe string enclosure for Bash/Zsh by replacing
+// any single quotes with an escaped version and wrapping the result.
+func escapeSingleQuotes(s string) string {
+	escaped := strings.ReplaceAll(s, "'", "'\\''")
+	return fmt.Sprintf("'%s'", escaped)
+}
+
+// escapeSingleQuotesFish safely escapes strings for Fish shell parsing.
+func escapeSingleQuotesFish(s string) string {
+	escaped := strings.ReplaceAll(s, "\\", "\\\\")
+	escaped = strings.ReplaceAll(escaped, "'", "\\'")
+	return fmt.Sprintf("'%s'", escaped)
+}
+
+// formatZonePattern converts a zone path into a safely quoted case pattern.
+func formatZonePattern(path string) string {
+	matchPath := path
+	if !strings.HasSuffix(matchPath, "/") {
+		matchPath += "/"
+	}
+
+	parts := strings.Split(matchPath, "*")
+	var res strings.Builder
+	for i, p := range parts {
+		if i > 0 {
+			res.WriteString("*")
+		}
+		if p != "" {
+			res.WriteString(escapeSingleQuotes(p))
+		}
+	}
+	res.WriteString("*")
+	return res.String()
+}
+
+// formatZonePatternFish applies formatZonePattern logic specifically for Fish escaping.
+func formatZonePatternFish(path string) string {
+	matchPath := path
+	if !strings.HasSuffix(matchPath, "/") {
+		matchPath += "/"
+	}
+	
+	// Unlike Bash, Fish's case builtin interprets wildcards accurately even when
+	// enclosed inside single quotes. We must fully quote the pattern to prevent
+	// the shell from attempting filesystem globbing before the case command executes.
+	matchPath += "*"
+
+	return escapeSingleQuotesFish(matchPath)
+}
+
+// -----------------------------------------------------------------------------
+// BASH GENERATION
+// -----------------------------------------------------------------------------
+
+func generateBash(builder *strings.Builder, zones []Zone, allVars []string, report bool) {
+	generateBashHeader(builder)
+	generateVarsArrayBash(builder, allVars)
+	generateSaveFunctionBash(builder)
+	generateRestoreFunctionBash(builder, report)
+	generateParentMapBash(builder, zones)
+	generateApplyOneZoneFunctionBash(builder, zones, report)
+	generateApplyStackFunctionBash(builder)
+	generateHookFunctionBash(builder, zones)
+}
+
 func generateBashHeader(builder *strings.Builder) {
 	builder.WriteString("__ENVSCP_ZONE=${__ENVSCP_ZONE:-\"NONE\"}\n")
 	builder.WriteString("declare -a __ENVSCP_C 2>/dev/null || true\n\n")
 }
 
-// generateVarsArray defines a global array of all managed variable names
-// to allow compact iteration via variable indirection.
-func generateVarsArray(builder *strings.Builder, allVars []string) {
+func generateVarsArrayBash(builder *strings.Builder, allVars []string) {
 	builder.WriteString("declare -a __ENVSCP_VARS=(\n")
 	for _, v := range allVars {
 		builder.WriteString(fmt.Sprintf("  \"%s\"\n", v))
@@ -349,9 +432,7 @@ func generateVarsArray(builder *strings.Builder, allVars []string) {
 	builder.WriteString(")\n\n")
 }
 
-// generateSaveFunction creates a Bash function to compactly store the original
-// environment state before any modifications are applied using indexed arrays.
-func generateSaveFunction(builder *strings.Builder) {
+func generateSaveFunctionBash(builder *strings.Builder) {
 	builder.WriteString(`__envscope_save_outer() {
   __ENVSCP_H=()
   __ENVSCP_O=()
@@ -369,9 +450,7 @@ func generateSaveFunction(builder *strings.Builder) {
 `)
 }
 
-// generateRestoreFunction creates a Bash function that reverts variables to their
-// original "outer" state from indexed arrays, optionally reporting changes.
-func generateRestoreFunction(builder *strings.Builder, report bool) {
+func generateRestoreFunctionBash(builder *strings.Builder, report bool) {
 	builder.WriteString(`__envscope_restore_outer() {
   for i in "${!__ENVSCP_VARS[@]}"; do
     local v="${__ENVSCP_VARS[$i]}"
@@ -398,10 +477,9 @@ func generateRestoreFunction(builder *strings.Builder, report bool) {
 `)
 }
 
-// generateParentMap defines a Bash associative array to represent the zone hierarchy.
-func generateParentMap(builder *strings.Builder, zones []Zone) {
+func generateParentMapBash(builder *strings.Builder, zones []Zone) {
 	builder.WriteString("declare -A __ENVSCP_PARENT=(\n")
-	for _, z := range zones {
+	for _, z := range getSortedZonesByID(zones) {
 		if z.ParentID != "" {
 			builder.WriteString(fmt.Sprintf("  [%s]=\"%s\"\n", z.ID, z.ParentID))
 		}
@@ -409,24 +487,36 @@ func generateParentMap(builder *strings.Builder, zones []Zone) {
 	builder.WriteString(")\n\n")
 }
 
-// generateApplyOneZoneFunction constructs the bash `case` structure for applying
-// the variables of a single zone, with optional reporting of added variables.
-func generateApplyOneZoneFunction(builder *strings.Builder, zones []Zone, report bool) {
+func generateApplyOneZoneFunctionBash(builder *strings.Builder, zones []Zone, report bool) {
 	builder.WriteString("__envscope_apply_one_zone() {\n")
 	builder.WriteString("  local zone=\"$1\"\n")
 	builder.WriteString("  case \"$zone\" in\n")
-	for _, z := range zones {
+	for _, z := range getSortedZonesByID(zones) {
 		builder.WriteString(fmt.Sprintf("    %s)\n", z.ID))
 		for _, ev := range z.Vars {
-			valueExpression := generateValueExpression(builder, ev)
+			escapedVal := escapeSingleQuotes(ev.Value)
+			var expr string
+			if ev.IsDynamic {
+				expr = fmt.Sprintf("$(eval %s)", escapedVal)
+			} else {
+				expr = escapedVal
+			}
+
+			if ev.IsDynamic && ev.Cache {
+				builder.WriteString(fmt.Sprintf("      if [[ -z \"${__ENVSCP_C[%d]:-}\" ]]; then\n", ev.CacheIndex))
+				builder.WriteString(fmt.Sprintf("        __ENVSCP_C[%d]=%s\n", ev.CacheIndex, expr))
+				builder.WriteString("      fi\n")
+				expr = fmt.Sprintf("\"${__ENVSCP_C[%d]}\"", ev.CacheIndex)
+			}
+
 			if ev.Prepend {
 				sep := ""
 				if ev.IsPath {
 					sep = ":"
 				}
-				builder.WriteString(fmt.Sprintf("      export %s=%s%s\"${%s:-}\"\n", ev.Name, valueExpression, sep, ev.Name))
+				builder.WriteString(fmt.Sprintf("      export %s=%s%s\"${%s:-}\"\n", ev.Name, expr, sep, ev.Name))
 			} else {
-				builder.WriteString(fmt.Sprintf("      export %s=%s\n", ev.Name, valueExpression))
+				builder.WriteString(fmt.Sprintf("      export %s=%s\n", ev.Name, expr))
 			}
 			if report {
 				builder.WriteString(fmt.Sprintf("      echo \"envscope: added %s\" >&2\n", ev.Name))
@@ -438,37 +528,7 @@ func generateApplyOneZoneFunction(builder *strings.Builder, zones []Zone, report
 	builder.WriteString("}\n\n")
 }
 
-// escapeSingleQuotes implements safe string enclosure for Bash by replacing
-// any single quotes with an escaped version and wrapping the result.
-func escapeSingleQuotes(s string) string {
-	escaped := strings.ReplaceAll(s, "'", "'\\''")
-	return fmt.Sprintf("'%s'", escaped)
-}
-
-// generateValueExpression determines how a variable value should be expressed in Bash.
-// Plain text is strictly single-quoted to prevent unintended shell evaluation.
-// Dynamic commands are safely delivered via $(eval '...').
-func generateValueExpression(builder *strings.Builder, ev EnvVar) string {
-	escapedVal := escapeSingleQuotes(ev.Value)
-	var expr string
-	if ev.IsDynamic {
-		expr = fmt.Sprintf("$(eval %s)", escapedVal)
-	} else {
-		expr = escapedVal
-	}
-
-	if ev.IsDynamic && ev.Cache {
-		builder.WriteString(fmt.Sprintf("      if [[ -z \"${__ENVSCP_C[%d]:-}\" ]]; then\n", ev.CacheIndex))
-		builder.WriteString(fmt.Sprintf("        __ENVSCP_C[%d]=%s\n", ev.CacheIndex, expr))
-		builder.WriteString("      fi\n")
-		return fmt.Sprintf("\"${__ENVSCP_C[%d]}\"", ev.CacheIndex)
-	}
-	return expr
-}
-
-// generateApplyStackFunction creates a Bash function that applies all variables
-// from a zone's ancestors down to the zone itself.
-func generateApplyStackFunction(builder *strings.Builder) {
+func generateApplyStackFunctionBash(builder *strings.Builder) {
 	builder.WriteString(`__envscope_apply_stack() {
   local zone_id="$1"
   local stack=()
@@ -484,37 +544,7 @@ func generateApplyStackFunction(builder *strings.Builder) {
 `)
 }
 
-// formatZonePattern converts a zone path into a safely quoted Bash case pattern,
-// appending wildcards where necessary to match current and nested directories.
-func formatZonePattern(path string) string {
-	matchPath := path
-	if !strings.HasSuffix(matchPath, "/") {
-		matchPath += "/"
-	}
-
-	parts := strings.Split(matchPath, "*")
-	var res strings.Builder
-	for i, p := range parts {
-		if i > 0 {
-			res.WriteString("*")
-		}
-		if p != "" {
-			res.WriteString(escapeSingleQuotes(p))
-		}
-	}
-
-	res.WriteString("*")
-	return res.String()
-}
-
-// generateHookFunction produces the runtime prompt trigger evaluation loop
-// implementing longest-match nested path sorting priority.
-func generateHookFunction(builder *strings.Builder, zones []Zone) {
-	// Sort longest paths first to give deepest nested folders priority.
-	sort.Slice(zones, func(i, j int) bool {
-		return len(zones[i].Path) > len(zones[j].Path)
-	})
-
+func generateHookFunctionBash(builder *strings.Builder, zones []Zone) {
 	builder.WriteString("__envscope_hook() {\n")
 	builder.WriteString("  local target_zone=\"NONE\"\n")
 	builder.WriteString("  local current_pwd=\"${PWD:-}\"\n")
@@ -526,7 +556,6 @@ func generateHookFunction(builder *strings.Builder, zones []Zone) {
 	}
 	builder.WriteString("  esac\n\n")
 
-	// Prepares the snippet that records the final state of all managed variables compactly.
 	var lastVarTracker strings.Builder
 	lastVarTracker.WriteString(`      __ENVSCP_L=()
       for i in "${!__ENVSCP_VARS[@]}"; do
@@ -534,7 +563,6 @@ func generateHookFunction(builder *strings.Builder, zones []Zone) {
         __ENVSCP_L[$i]="${!v:-}"
       done`)
 
-	// Evaluates the current zone versus the known state, calling out to save/restore/apply logic.
 	builder.WriteString(fmt.Sprintf(`  if [[ "$target_zone" != "${__ENVSCP_ZONE:-NONE}" ]]; then
     if [[ "${__ENVSCP_ZONE:-NONE}" != "NONE" ]]; then
       __envscope_restore_outer
@@ -561,4 +589,403 @@ if [[ ! "${PROMPT_COMMAND:-}" =~ __envscope_hook ]] && [[ "${PROMPT_COMMAND[*]:-
   fi
 fi
 `, lastVarTracker.String()))
+}
+
+// -----------------------------------------------------------------------------
+// ZSH GENERATION
+// -----------------------------------------------------------------------------
+
+func generateZsh(builder *strings.Builder, zones []Zone, allVars []string, report bool) {
+	generateZshHeader(builder)
+	generateVarsArrayZsh(builder, allVars)
+	generateSaveFunctionZsh(builder)
+	generateRestoreFunctionZsh(builder, report)
+	generateParentMapZsh(builder, zones)
+	generateApplyOneZoneFunctionZsh(builder, zones, report)
+	generateApplyStackFunctionZsh(builder)
+	generateHookFunctionZsh(builder, zones)
+}
+
+func generateZshHeader(builder *strings.Builder) {
+	builder.WriteString("typeset -g __ENVSCP_ZONE=${__ENVSCP_ZONE:-\"NONE\"}\n")
+	builder.WriteString("typeset -g -a __ENVSCP_C 2>/dev/null || true\n\n")
+}
+
+func generateVarsArrayZsh(builder *strings.Builder, allVars []string) {
+	builder.WriteString("typeset -g -a __ENVSCP_VARS=(\n")
+	for _, v := range allVars {
+		builder.WriteString(fmt.Sprintf("  \"%s\"\n", v))
+	}
+	builder.WriteString(")\n\n")
+}
+
+func generateSaveFunctionZsh(builder *strings.Builder) {
+	builder.WriteString(`__envscope_save_outer() {
+  __ENVSCP_H=()
+  __ENVSCP_O=()
+  local i
+  for i in {1..${#__ENVSCP_VARS[@]}}; do
+    local v="${__ENVSCP_VARS[$i]}"
+    if [[ -n "${(P)v+x}" ]]; then
+      __ENVSCP_H[$i]=1
+      __ENVSCP_O[$i]="${(P)v}"
+    else
+      __ENVSCP_H[$i]=0
+    fi
+  done
+}
+
+`)
+}
+
+func generateRestoreFunctionZsh(builder *strings.Builder, report bool) {
+	builder.WriteString(`__envscope_restore_outer() {
+  local i
+  for i in {1..${#__ENVSCP_VARS[@]}}; do
+    local v="${__ENVSCP_VARS[$i]}"
+    if [[ "${(P)v:-}" == "${__ENVSCP_L[$i]:-}" ]]; then
+      if [[ ${__ENVSCP_H[$i]:-0} -eq 1 ]]; then
+        export "$v"="${__ENVSCP_O[$i]:-}"
+      else
+`)
+	if report {
+		builder.WriteString(`        if [[ -n "${(P)v+x}" ]]; then
+          unset "$v"
+          echo "envscope: removed $v" >&2
+        fi
+`)
+	} else {
+		builder.WriteString(`        unset "$v"
+`)
+	}
+	builder.WriteString(`      fi
+    fi
+  done
+}
+
+`)
+}
+
+func generateParentMapZsh(builder *strings.Builder, zones []Zone) {
+	builder.WriteString("typeset -g -A __ENVSCP_PARENT=(\n")
+	for _, z := range getSortedZonesByID(zones) {
+		if z.ParentID != "" {
+			builder.WriteString(fmt.Sprintf("  [%s]=\"%s\"\n", z.ID, z.ParentID))
+		}
+	}
+	builder.WriteString(")\n\n")
+}
+
+func generateApplyOneZoneFunctionZsh(builder *strings.Builder, zones []Zone, report bool) {
+	builder.WriteString("__envscope_apply_one_zone() {\n")
+	builder.WriteString("  local zone=\"$1\"\n")
+	builder.WriteString("  case \"$zone\" in\n")
+	for _, z := range getSortedZonesByID(zones) {
+		builder.WriteString(fmt.Sprintf("    %s)\n", z.ID))
+		for _, ev := range z.Vars {
+			escapedVal := escapeSingleQuotes(ev.Value)
+			var expr string
+			if ev.IsDynamic {
+				expr = fmt.Sprintf("$(eval %s)", escapedVal)
+			} else {
+				expr = escapedVal
+			}
+
+			if ev.IsDynamic && ev.Cache {
+				cIdx := ev.CacheIndex + 1
+				builder.WriteString(fmt.Sprintf("      if [[ -z \"${__ENVSCP_C[%d]:-}\" ]]; then\n", cIdx))
+				builder.WriteString(fmt.Sprintf("        __ENVSCP_C[%d]=%s\n", cIdx, expr))
+				builder.WriteString("      fi\n")
+				expr = fmt.Sprintf("\"${__ENVSCP_C[%d]}\"", cIdx)
+			}
+
+			if ev.Prepend {
+				sep := ""
+				if ev.IsPath {
+					sep = ":"
+				}
+				builder.WriteString(fmt.Sprintf("      export %s=%s%s\"${%s:-}\"\n", ev.Name, expr, sep, ev.Name))
+			} else {
+				builder.WriteString(fmt.Sprintf("      export %s=%s\n", ev.Name, expr))
+			}
+			if report {
+				builder.WriteString(fmt.Sprintf("      echo \"envscope: added %s\" >&2\n", ev.Name))
+			}
+		}
+		builder.WriteString("      ;;\n")
+	}
+	builder.WriteString("  esac\n")
+	builder.WriteString("}\n\n")
+}
+
+func generateApplyStackFunctionZsh(builder *strings.Builder) {
+	builder.WriteString(`__envscope_apply_stack() {
+  local zone_id="$1"
+  local stack=()
+  while [[ -n "$zone_id" && "$zone_id" != "NONE" ]]; do
+    stack=("$zone_id" "${stack[@]}")
+    zone_id="${__ENVSCP_PARENT[$zone_id]:-NONE}"
+  done
+  local z
+  for z in "${stack[@]}"; do
+    __envscope_apply_one_zone "$z"
+  done
+}
+
+`)
+}
+
+func generateHookFunctionZsh(builder *strings.Builder, zones []Zone) {
+	builder.WriteString("__envscope_hook() {\n")
+	builder.WriteString("  local target_zone=\"NONE\"\n")
+	builder.WriteString("  local current_pwd=\"${PWD:-}\"\n")
+	builder.WriteString("  current_pwd=\"${current_pwd%/}/\"\n")
+	builder.WriteString("  case \"$current_pwd\" in\n")
+	for _, z := range zones {
+		pattern := formatZonePattern(z.Path)
+		builder.WriteString(fmt.Sprintf("    %s ) target_zone=\"%s\" ;;\n", pattern, z.ID))
+	}
+	builder.WriteString("  esac\n\n")
+
+	var lastVarTracker strings.Builder
+	lastVarTracker.WriteString(`      __ENVSCP_L=()
+      local i
+      for i in {1..${#__ENVSCP_VARS[@]}}; do
+        local v="${__ENVSCP_VARS[$i]}"
+        __ENVSCP_L[$i]="${(P)v:-}"
+      done`)
+
+	builder.WriteString(fmt.Sprintf(`  if [[ "$target_zone" != "${__ENVSCP_ZONE:-NONE}" ]]; then
+    if [[ "${__ENVSCP_ZONE:-NONE}" != "NONE" ]]; then
+      __envscope_restore_outer
+    fi
+    if [[ "$target_zone" != "NONE" ]]; then
+      if [[ "${__ENVSCP_ZONE:-NONE}" == "NONE" ]]; then
+        __envscope_save_outer
+      fi
+      __envscope_apply_stack "$target_zone"
+%s
+    else
+      unset __ENVSCP_L __ENVSCP_O __ENVSCP_H
+    fi
+    __ENVSCP_ZONE="$target_zone"
+  fi
+}
+
+autoload -Uz add-zsh-hook
+add-zsh-hook precmd __envscope_hook
+`, lastVarTracker.String()))
+}
+
+// -----------------------------------------------------------------------------
+// FISH GENERATION
+// -----------------------------------------------------------------------------
+
+func generateFish(builder *strings.Builder, zones []Zone, allVars []string, report bool) {
+	generateFishHeader(builder, allVars)
+	generateSaveFunctionFish(builder)
+	generateRestoreFunctionFish(builder, report)
+	generateParentMapFish(builder, zones)
+	generateApplyOneZoneFunctionFish(builder, zones, report)
+	generateApplyStackFunctionFish(builder)
+	generateHookFunctionFish(builder, zones)
+}
+
+func generateFishHeader(builder *strings.Builder, allVars []string) {
+	builder.WriteString("if not set -q __ENVSCP_ZONE\n")
+	builder.WriteString("  set -g __ENVSCP_ZONE \"NONE\"\n")
+	builder.WriteString("end\n")
+	builder.WriteString("set -g -a __ENVSCP_C\n\n")
+
+	builder.WriteString("set -g __ENVSCP_VARS")
+	for _, v := range allVars {
+		builder.WriteString(fmt.Sprintf(" \"%s\"", v))
+	}
+	builder.WriteString("\n\n")
+}
+
+func generateSaveFunctionFish(builder *strings.Builder) {
+	builder.WriteString(`function __envscope_save_outer
+  set -g __ENVSCP_H
+  set -g __ENVSCP_O
+  if test (count $__ENVSCP_VARS) -eq 0
+    return
+  end
+  for i in (seq 1 (count $__ENVSCP_VARS))
+    set -l v $__ENVSCP_VARS[$i]
+    if set -q $v
+      set -a __ENVSCP_H 1
+      set -a __ENVSCP_O (string join ":" $$v)
+    else
+      set -a __ENVSCP_H 0
+      set -a __ENVSCP_O ""
+    end
+  end
+end
+
+`)
+}
+
+func generateRestoreFunctionFish(builder *strings.Builder, report bool) {
+	builder.WriteString(`function __envscope_restore_outer
+  if test (count $__ENVSCP_VARS) -eq 0
+    return
+  end
+  for i in (seq 1 (count $__ENVSCP_VARS))
+    set -l v $__ENVSCP_VARS[$i]
+    set -l current_val ""
+    if set -q $v
+      set current_val (string join ":" $$v)
+    end
+    set -l last_val ""
+    if set -q __ENVSCP_L[$i]
+      set last_val $__ENVSCP_L[$i]
+    end
+
+    if test "$current_val" = "$last_val"
+      if test "$__ENVSCP_H[$i]" = "1"
+        if test "$v" = "PATH"
+          set -gx PATH (string split ":" "$__ENVSCP_O[$i]")
+        else
+          set -gx $v "$__ENVSCP_O[$i]"
+        end
+      else
+`)
+	if report {
+		builder.WriteString(`        if set -q $v
+          set -e $v
+          echo "envscope: removed $v" >&2
+        end
+`)
+	} else {
+		builder.WriteString(`        set -e $v
+`)
+	}
+	builder.WriteString(`      end
+    end
+  end
+end
+
+`)
+}
+
+func generateParentMapFish(builder *strings.Builder, zones []Zone) {
+	builder.WriteString("function __envscope_get_parent\n")
+	builder.WriteString("  switch \"$argv[1]\"\n")
+	for _, z := range getSortedZonesByID(zones) {
+		if z.ParentID != "" {
+			builder.WriteString(fmt.Sprintf("    case %s\n      echo \"%s\"\n", z.ID, z.ParentID))
+		}
+	}
+	builder.WriteString("    case '*'\n      echo \"NONE\"\n")
+	builder.WriteString("  end\n")
+	builder.WriteString("end\n\n")
+}
+
+func generateApplyOneZoneFunctionFish(builder *strings.Builder, zones []Zone, report bool) {
+	builder.WriteString("function __envscope_apply_one_zone\n")
+	builder.WriteString("  set -l zone \"$argv[1]\"\n")
+	builder.WriteString("  switch \"$zone\"\n")
+	for _, z := range getSortedZonesByID(zones) {
+		builder.WriteString(fmt.Sprintf("    case %s\n", z.ID))
+		for _, ev := range z.Vars {
+			escapedVal := escapeSingleQuotesFish(ev.Value)
+			var expr string
+			if ev.IsDynamic {
+				expr = fmt.Sprintf("(eval %s)", escapedVal)
+			} else {
+				expr = escapedVal
+			}
+
+			if ev.IsDynamic && ev.Cache {
+				cIdx := ev.CacheIndex + 1
+				builder.WriteString(fmt.Sprintf("      if not set -q __ENVSCP_C[%d]\n", cIdx))
+				builder.WriteString(fmt.Sprintf("        set -g __ENVSCP_C[%d] %s\n", cIdx, expr))
+				builder.WriteString("      end\n")
+				expr = fmt.Sprintf("\"$__ENVSCP_C[%d]\"", cIdx)
+			}
+
+			if ev.Prepend {
+				if ev.Name == "PATH" {
+					builder.WriteString(fmt.Sprintf("      set -gx %s %s $%s\n", ev.Name, expr, ev.Name))
+				} else {
+					sep := ""
+					if ev.IsPath {
+						sep = ":"
+					}
+					builder.WriteString(fmt.Sprintf("      set -gx %s %s%s\"$%s\"\n", ev.Name, expr, sep, ev.Name))
+				}
+			} else {
+				if ev.Name == "PATH" {
+					builder.WriteString(fmt.Sprintf("      set -gx %s (string split \":\" %s)\n", ev.Name, expr))
+				} else {
+					builder.WriteString(fmt.Sprintf("      set -gx %s %s\n", ev.Name, expr))
+				}
+			}
+			if report {
+				builder.WriteString(fmt.Sprintf("      echo \"envscope: added %s\" >&2\n", ev.Name))
+			}
+		}
+	}
+	builder.WriteString("  end\n")
+	builder.WriteString("end\n\n")
+}
+
+func generateApplyStackFunctionFish(builder *strings.Builder) {
+	builder.WriteString(`function __envscope_apply_stack
+  set -l zone_id "$argv[1]"
+  set -l stack
+  while test -n "$zone_id" -a "$zone_id" != "NONE"
+    set stack $zone_id $stack
+    set zone_id (__envscope_get_parent "$zone_id")
+  end
+  for z in $stack
+    __envscope_apply_one_zone "$z"
+  end
+end
+
+`)
+}
+
+func generateHookFunctionFish(builder *strings.Builder, zones []Zone) {
+	builder.WriteString("function __envscope_hook --on-event fish_prompt\n")
+	builder.WriteString("  set -l target_zone \"NONE\"\n")
+	builder.WriteString("  set -l current_pwd \"$PWD\"\n")
+	builder.WriteString("  set current_pwd (string replace -r '/+$' '' -- \"$current_pwd\")/\n")
+	builder.WriteString("  switch \"$current_pwd\"\n")
+	for _, z := range zones {
+		pattern := formatZonePatternFish(z.Path)
+		builder.WriteString(fmt.Sprintf("    case %s\n      set target_zone \"%s\"\n", pattern, z.ID))
+	}
+	builder.WriteString("  end\n\n")
+
+	builder.WriteString(`  if test "$target_zone" != "$__ENVSCP_ZONE"
+    if test "$__ENVSCP_ZONE" != "NONE"
+      __envscope_restore_outer
+    end
+    if test "$target_zone" != "NONE"
+      if test "$__ENVSCP_ZONE" = "NONE"
+        __envscope_save_outer
+      end
+      __envscope_apply_stack "$target_zone"
+      set -g __ENVSCP_L
+      if test (count $__ENVSCP_VARS) -gt 0
+        for i in (seq 1 (count $__ENVSCP_VARS))
+          set -l v $__ENVSCP_VARS[$i]
+          if set -q $v
+            set -a __ENVSCP_L (string join ":" $$v)
+          else
+            set -a __ENVSCP_L ""
+          end
+        end
+      end
+    else
+      set -e __ENVSCP_L
+      set -e __ENVSCP_O
+      set -e __ENVSCP_H
+    end
+    set -g __ENVSCP_ZONE "$target_zone"
+  end
+end
+`)
 }

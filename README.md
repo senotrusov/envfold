@@ -17,7 +17,7 @@ Unlike many environment managers that search for `.env` files in every directory
 ## Features
 
 * **Centralized configuration:** Manage all directory rules in `~/.config/envscope/main.conf`. A different path can be specified via an option.
-* **Fast:** After initialization, everything runs as pure Bash logic. No external binaries are invoked when changing directories, and no processes are spawned unless explicitly requested in the configuration through dynamic variables.
+* **Fast:** After initialization, everything runs as pure logic native to your shell (`bash`, `zsh`, or `fish`). No external binaries are invoked when changing directories, and no processes are spawned unless explicitly requested in the configuration through dynamic variables.
 * **Hierarchical:** Variables automatically inherit from parent directories.
 * **Robust:** Compatible with `set -euo pipefail`.
 * **Prepend support:** Easily prepend values to `PATH` or other variables using the `+` prefix.
@@ -42,8 +42,9 @@ Unlike many environment managers that search for `.env` files in every directory
    ```
 
 3. **Enable it in your shell:**
-   Add the following line to the end of your `~/.bashrc`:
+   Add the appropriate line to the end of your shell's configuration file:
 
+   **Bash** (`~/.bashrc`):
    ```bash
    # Load envscope hook if available
    if command -v envscope &>/dev/null; then
@@ -51,15 +52,25 @@ Unlike many environment managers that search for `.env` files in every directory
    fi
    ```
 
+   **Zsh** (`~/.zshrc`):
+   ```zsh
+   # Load envscope hook if available
+   if command -v envscope &>/dev/null; then
+     source <(envscope hook zsh)
+   fi
+   ```
+
+   **Fish** (`~/.config/fish/config.fish`):
+   ```fish
+   # Load envscope hook if available
+   if command -v envscope &>/dev/null
+     envscope hook fish | source
+   end
+   ```
+
 ### Reporting Changes
 
-To get feedback in your terminal whenever `envscope` modifies your environment, update the initialization line in your `~/.bashrc` to include the `-reportvars` flag:
-
-```bash
-builtin source <(envscope -reportvars hook bash)
-```
-
-This will print messages to `stderr` like:
+To get feedback in your terminal whenever `envscope` modifies your environment, update the initialization line in your config file to include the `-reportvars` flag. This will print messages to `stderr` like:
 - `envscope: added PGDATABASE`
 - `envscope: removed TEMP_ENV`
 
@@ -74,7 +85,7 @@ The configuration file is located at `~/.config/envscope/main.conf`.
   - **Plain text:** Values are treated as literal strings and do not require surrounding quotes. They are safely enclosed in single quotes when executed, preserving spaces and special characters. Double quotes around the entire value (e.g., `VAR="val"`) are not currently supported and will return an error.
   - **Tilde Expansion:** A tilde (`~`) at the beginning of an unquoted value expands to your home directory (e.g., `VAR=~/foo` becomes `/home/user/foo`). Tildes in the middle of a string are treated literally (`VAR=a~/foo`).
   - **PATH Special Case:** For the `PATH` variable specifically, tildes that immediately follow a colon `:` are also expanded, supporting standard list formats like `PATH=~/bin:/usr/bin:~/.local/bin`.
-  - **Dynamic Values:** You can evaluate Bash commands by wrapping the *entire* value in `$()`, such as `$(command)`. These are safely evaluated at runtime.
+  - **Dynamic Values:** You can evaluate shell commands by wrapping the *entire* value in `$()`, such as `$(command)`. These are safely evaluated at runtime.
   - **Caching:** By default, dynamic values are re-evaluated on each scope change. To cache the result for the current shell session, add a `# cache` comment at the end of the line.
 
 ### Multiple Folders

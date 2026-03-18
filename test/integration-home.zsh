@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env zsh
 set -euo pipefail
 
 export HOME="$(pwd)/test"
@@ -30,9 +30,9 @@ assert_empty() {
   fi
 }
 
-echo "BASH: Running Home / No-Root Integration Tests"
+echo "ZSH: Running Home / No-Root Integration Tests"
 
-source <(bin/envscope -c test/home.conf hook bash)
+source <(bin/envscope -c test/home.conf hook zsh)
 
 # 1. Start outside managed zones (e.g., /tmp)
 cd /tmp

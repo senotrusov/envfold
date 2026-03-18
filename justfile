@@ -50,17 +50,49 @@ context:
 # Run the test suite
 test: build
   #!/usr/bin/env bash
-  set -euo pipefail
+  set -u # Error if variable is undefined
+  
+  footer=$(mktemp)
+  final_exit_status=0
 
-  bash test/integration.bash
-  bash test/integration-home.bash
+  # Helper function to run commands and capture exit status
+  task() {
+    "$@"
+    if [[ $? -ne 0 ]]; then
+      final_exit_status=1
+      echo "FAILED: $*" >> "$footer"
+    fi
+  }
 
   generate() {
     bin/envscope -c test/test.conf "$@" | sed "s|${HOME}/|/home/user/|g"
   }
 
-  generate hook bash > test/hook.bash
-  generate -reportvars hook bash > test/hook-reportnames.bash
+  # Use the helper for the scripts
+  task bash test/integration.bash
+  task bash test/integration-home.bash
+  task zsh test/integration.zsh
+  task zsh test/integration-home.zsh
+  task fish test/integration.fish
+  task fish test/integration-home.fish
+
+  # For the generate calls, we wrap them in a subshell or call directly
+  # Redirection works fine with the helper function
+  task generate hook bash > test/hook.bash
+  task generate -reportvars hook bash > test/hook-reportnames.bash
+  
+  task generate hook fish > test/hook.fish
+  task generate -reportvars hook fish > test/hook-reportnames.fish
+  
+  task generate hook zsh > test/hook.zsh
+  task generate -reportvars hook zsh > test/hook-reportnames.zsh
+
+  if [[ -s "$footer" ]]; then
+    cat "$footer"
+  fi
+
+  rm -f "$footer"
+  exit "$final_exit_status"
 
 # Start a nested Bash shell with the test configuration hook pre-loaded
 test-shell: build
