@@ -7,7 +7,7 @@
 # SPDX-License-Identifier: Apache-2.0 OR MIT
 
 # Set the project name
-project := "envscope"
+project := "envfold"
 
 # Release module
 mod release
@@ -86,7 +86,7 @@ test: unit-test build
   }
 
   generate() {
-    bin/envscope -c test/test.conf "$@" | sed "s|${HOME}/|/home/user/|g"
+    bin/envfold -c test/test.conf "$@" | sed "s|${HOME}/|/home/user/|g"
   }
 
   test_integration() {
@@ -101,11 +101,11 @@ test: unit-test build
   task fish test/integration-home.fish
 
   # Run Integration Tests: Standard Mode
-  export ENVSCP_TEST_STRICT=0
+  export ENVFLD_TEST_STRICT=0
   test_integration
 
   # Run Integration Tests: Strict Mode
-  export ENVSCP_TEST_STRICT=1
+  export ENVFLD_TEST_STRICT=1
   test_integration
   
   # Generate documentation artifacts
@@ -129,8 +129,8 @@ test-shell: build
   set -euo pipefail
   export HOME="$PWD/test"
   bash --rcfile <(
-    echo 'export PS1="${PS1:-}(envscope-test) "'
-    bin/envscope -c test/test.conf -reportvars hook bash
+    echo 'export PS1="${PS1:-}(envfold-test) "'
+    bin/envfold -c test/test.conf -reportvars hook bash
     echo 'cd $HOME'
   ) -i || true
 

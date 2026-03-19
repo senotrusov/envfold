@@ -24,12 +24,12 @@ func generateFish(builder *strings.Builder, zones []Zone, allVars []string, repo
 }
 
 func generateFishHeader(builder *strings.Builder, allVars []string) {
-	builder.WriteString("if not set -q __ENVSCP_ZONE\n")
-	builder.WriteString("  set -g __ENVSCP_ZONE \"NONE\"\n")
+	builder.WriteString("if not set -q __ENVFLD_ZONE\n")
+	builder.WriteString("  set -g __ENVFLD_ZONE \"NONE\"\n")
 	builder.WriteString("end\n")
-	builder.WriteString("set -g -a __ENVSCP_C\n\n")
+	builder.WriteString("set -g -a __ENVFLD_C\n\n")
 
-	builder.WriteString("set -g __ENVSCP_VARS")
+	builder.WriteString("set -g __ENVFLD_VARS")
 	for _, v := range allVars {
 		builder.WriteString(fmt.Sprintf(" \"%s\"", v))
 	}
@@ -37,20 +37,20 @@ func generateFishHeader(builder *strings.Builder, allVars []string) {
 }
 
 func generateSaveFunctionFish(builder *strings.Builder) {
-	builder.WriteString(`function __envscope_save_outer
-  set -g __ENVSCP_H
-  set -g __ENVSCP_O
-  if test (count $__ENVSCP_VARS) -eq 0
+	builder.WriteString(`function __envfold_save_outer
+  set -g __ENVFLD_H
+  set -g __ENVFLD_O
+  if test (count $__ENVFLD_VARS) -eq 0
     return
   end
-  for i in (seq 1 (count $__ENVSCP_VARS))
-    set -l v $__ENVSCP_VARS[$i]
+  for i in (seq 1 (count $__ENVFLD_VARS))
+    set -l v $__ENVFLD_VARS[$i]
     if set -q $v
-      set -a __ENVSCP_H 1
-      set -a __ENVSCP_O (string join ":" $$v)
+      set -a __ENVFLD_H 1
+      set -a __ENVFLD_O (string join ":" $$v)
     else
-      set -a __ENVSCP_H 0
-      set -a __ENVSCP_O ""
+      set -a __ENVFLD_H 0
+      set -a __ENVFLD_O ""
     end
   end
 end
@@ -59,34 +59,34 @@ end
 }
 
 func generateRestoreFunctionFish(builder *strings.Builder, report bool) {
-	builder.WriteString(`function __envscope_restore_outer
-  if test (count $__ENVSCP_VARS) -eq 0
+	builder.WriteString(`function __envfold_restore_outer
+  if test (count $__ENVFLD_VARS) -eq 0
     return
   end
-  for i in (seq 1 (count $__ENVSCP_VARS))
-    set -l v $__ENVSCP_VARS[$i]
+  for i in (seq 1 (count $__ENVFLD_VARS))
+    set -l v $__ENVFLD_VARS[$i]
     set -l current_val ""
     if set -q $v
       set current_val (string join ":" $$v)
     end
     set -l last_val ""
-    if set -q __ENVSCP_L[$i]
-      set last_val $__ENVSCP_L[$i]
+    if set -q __ENVFLD_L[$i]
+      set last_val $__ENVFLD_L[$i]
     end
 
     if test "$current_val" = "$last_val"
-      if test "$__ENVSCP_H[$i]" = "1"
+      if test "$__ENVFLD_H[$i]" = "1"
         if test "$v" = "PATH"
-          set -gx PATH (string split ":" "$__ENVSCP_O[$i]")
+          set -gx PATH (string split ":" "$__ENVFLD_O[$i]")
         else
-          set -gx $v "$__ENVSCP_O[$i]"
+          set -gx $v "$__ENVFLD_O[$i]"
         end
       else
 `)
 	if report {
 		builder.WriteString(`        if set -q $v
           set -e $v
-          echo "envscope: removed $v" >&2
+          echo "envfold: removed $v" >&2
         end
 `)
 	} else {
@@ -102,7 +102,7 @@ end
 }
 
 func generateParentMapFish(builder *strings.Builder, zones []Zone) {
-	builder.WriteString("function __envscope_get_parent\n")
+	builder.WriteString("function __envfold_get_parent\n")
 	builder.WriteString("  switch \"$argv[1]\"\n")
 	for _, z := range getSortedZonesByID(zones) {
 		if z.ParentID != -1 {
@@ -115,7 +115,7 @@ func generateParentMapFish(builder *strings.Builder, zones []Zone) {
 }
 
 func generateApplyOneZoneFunctionFish(builder *strings.Builder, zones []Zone, report bool) {
-	builder.WriteString("function __envscope_apply_one_zone\n")
+	builder.WriteString("function __envfold_apply_one_zone\n")
 	builder.WriteString("  set -l zone \"$argv[1]\"\n")
 	builder.WriteString("  switch \"$zone\"\n")
 	for _, z := range getSortedZonesByID(zones) {
@@ -131,10 +131,10 @@ func generateApplyOneZoneFunctionFish(builder *strings.Builder, zones []Zone, re
 
 			if ev.IsDynamic && ev.Cache {
 				cIdx := ev.CacheIndex + 1
-				builder.WriteString(fmt.Sprintf("      if not set -q __ENVSCP_C[%d]\n", cIdx))
-				builder.WriteString(fmt.Sprintf("        set -g __ENVSCP_C[%d] %s\n", cIdx, expr))
+				builder.WriteString(fmt.Sprintf("      if not set -q __ENVFLD_C[%d]\n", cIdx))
+				builder.WriteString(fmt.Sprintf("        set -g __ENVFLD_C[%d] %s\n", cIdx, expr))
 				builder.WriteString("      end\n")
-				expr = fmt.Sprintf("\"$__ENVSCP_C[%d]\"", cIdx)
+				expr = fmt.Sprintf("\"$__ENVFLD_C[%d]\"", cIdx)
 			}
 
 			if ev.Prepend {
@@ -155,7 +155,7 @@ func generateApplyOneZoneFunctionFish(builder *strings.Builder, zones []Zone, re
 				}
 			}
 			if report {
-				builder.WriteString(fmt.Sprintf("      echo \"envscope: added %s\" >&2\n", ev.Name))
+				builder.WriteString(fmt.Sprintf("      echo \"envfold: added %s\" >&2\n", ev.Name))
 			}
 		}
 	}
@@ -164,15 +164,15 @@ func generateApplyOneZoneFunctionFish(builder *strings.Builder, zones []Zone, re
 }
 
 func generateApplyStackFunctionFish(builder *strings.Builder) {
-	builder.WriteString(`function __envscope_apply_stack
+	builder.WriteString(`function __envfold_apply_stack
   set -l zone_id "$argv[1]"
   set -l stack
   while test -n "$zone_id" -a "$zone_id" != "NONE"
     set stack $zone_id $stack
-    set zone_id (__envscope_get_parent "$zone_id")
+    set zone_id (__envfold_get_parent "$zone_id")
   end
   for z in $stack
-    __envscope_apply_one_zone "$z"
+    __envfold_apply_one_zone "$z"
   end
 end
 
@@ -180,7 +180,7 @@ end
 }
 
 func generateHookFunctionFish(builder *strings.Builder, zones []Zone) {
-	builder.WriteString("function __envscope_hook --on-event fish_prompt\n")
+	builder.WriteString("function __envfold_hook --on-event fish_prompt\n")
 	builder.WriteString("  set -l target_zone \"NONE\"\n")
 	builder.WriteString("  set -l current_pwd \"$PWD\"\n")
 	builder.WriteString("  set current_pwd (string replace -r '/+$' '' -- \"$current_pwd\")/\n")
@@ -191,32 +191,32 @@ func generateHookFunctionFish(builder *strings.Builder, zones []Zone) {
 	}
 	builder.WriteString("  end\n\n")
 
-	builder.WriteString(`  if test "$target_zone" != "$__ENVSCP_ZONE"
-    if test "$__ENVSCP_ZONE" != "NONE"
-      __envscope_restore_outer
+	builder.WriteString(`  if test "$target_zone" != "$__ENVFLD_ZONE"
+    if test "$__ENVFLD_ZONE" != "NONE"
+      __envfold_restore_outer
     end
     if test "$target_zone" != "NONE"
-      if test "$__ENVSCP_ZONE" = "NONE"
-        __envscope_save_outer
+      if test "$__ENVFLD_ZONE" = "NONE"
+        __envfold_save_outer
       end
-      __envscope_apply_stack "$target_zone"
-      set -g __ENVSCP_L
-      if test (count $__ENVSCP_VARS) -gt 0
-        for i in (seq 1 (count $__ENVSCP_VARS))
-          set -l v $__ENVSCP_VARS[$i]
+      __envfold_apply_stack "$target_zone"
+      set -g __ENVFLD_L
+      if test (count $__ENVFLD_VARS) -gt 0
+        for i in (seq 1 (count $__ENVFLD_VARS))
+          set -l v $__ENVFLD_VARS[$i]
           if set -q $v
-            set -a __ENVSCP_L (string join ":" $$v)
+            set -a __ENVFLD_L (string join ":" $$v)
           else
-            set -a __ENVSCP_L ""
+            set -a __ENVFLD_L ""
           end
         end
       end
     else
-      set -e __ENVSCP_L
-      set -e __ENVSCP_O
-      set -e __ENVSCP_H
+      set -e __ENVFLD_L
+      set -e __ENVFLD_O
+      set -e __ENVFLD_H
     end
-    set -g __ENVSCP_ZONE "$target_zone"
+    set -g __ENVFLD_ZONE "$target_zone"
   end
 end
 `)

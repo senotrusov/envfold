@@ -2,22 +2,22 @@
 
 ITERATIONS=100000
 VARNAMES=(TESTROOT)
-__ENVSCP_L=("")
+__ENVFLD_L=("")
 
 benchmark() {
     local TYPE=$1
     local start=$(date +%s%N)
     
     for ((i=0; i<ITERATIONS; i++)); do
-        __ENVSCP_H=()
-        __ENVSCP_O=()
+        __ENVFLD_H=()
+        __ENVFLD_O=()
         
         if [[ "$TYPE" == "hardcoded" ]]; then
             # --- HARDCODED LOGIC ---
-            [[ -n "${TESTROOT+x}" ]] && { __ENVSCP_H[0]=1; __ENVSCP_O[0]="$TESTROOT"; } || __ENVSCP_H[0]=0
-            if [[ "${TESTROOT:-}" == "${__ENVSCP_L[0]:-}" ]]; then
-                if [[ ${__ENVSCP_H[0]:-0} -eq 1 ]]; then
-                    export TESTROOT="${__ENVSCP_O[0]:-}"
+            [[ -n "${TESTROOT+x}" ]] && { __ENVFLD_H[0]=1; __ENVFLD_O[0]="$TESTROOT"; } || __ENVFLD_H[0]=0
+            if [[ "${TESTROOT:-}" == "${__ENVFLD_L[0]:-}" ]]; then
+                if [[ ${__ENVFLD_H[0]:-0} -eq 1 ]]; then
+                    export TESTROOT="${__ENVFLD_O[0]:-}"
                 else
                     unset TESTROOT
                 fi
@@ -27,10 +27,10 @@ benchmark() {
             # --- INDIRECT LOGIC ---
             for j in "${!VARNAMES[@]}"; do
                 local vname="${VARNAMES[$j]}"
-                [[ -n "${!vname+x}" ]] && { __ENVSCP_H[$j]=1; __ENVSCP_O[$j]="${!vname}"; } || __ENVSCP_H[$j]=0
-                if [[ "${!vname:-}" == "${__ENVSCP_L[$j]:-}" ]]; then
-                    if [[ ${__ENVSCP_H[$j]:-0} -eq 1 ]]; then
-                        export "$vname"="${__ENVSCP_O[$j]:-}"
+                [[ -n "${!vname+x}" ]] && { __ENVFLD_H[$j]=1; __ENVFLD_O[$j]="${!vname}"; } || __ENVFLD_H[$j]=0
+                if [[ "${!vname:-}" == "${__ENVFLD_L[$j]:-}" ]]; then
+                    if [[ ${__ENVFLD_H[$j]:-0} -eq 1 ]]; then
+                        export "$vname"="${__ENVFLD_O[$j]:-}"
                     else
                         unset "$vname"
                     fi

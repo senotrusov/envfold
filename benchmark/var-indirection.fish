@@ -2,7 +2,7 @@
 
 set ITERATIONS 100000
 set VARNAMES TESTROOT
-set __ENVSCP_L ""
+set __ENVFLD_L ""
 
 # Pre-calculate to avoid subshells in loops
 set LOOP_RANGE (seq $ITERATIONS)
@@ -13,20 +13,20 @@ function benchmark
     set -l start (date +%s%N)
     
     for i in $LOOP_RANGE
-        set -l __ENVSCP_H
-        set -l __ENVSCP_O
+        set -l __ENVFLD_H
+        set -l __ENVFLD_O
         
         if test "$TYPE" = "hardcoded"
             if set -q TESTROOT
-                set __ENVSCP_H[1] 1
-                set __ENVSCP_O[1] "$TESTROOT"
+                set __ENVFLD_H[1] 1
+                set __ENVFLD_O[1] "$TESTROOT"
             else
-                set __ENVSCP_H[1] 0
+                set __ENVFLD_H[1] 0
             end
 
-            if test "$TESTROOT" = "$__ENVSCP_L[1]"
-                if test "$__ENVSCP_H[1]" -eq 1
-                    set -gx TESTROOT "$__ENVSCP_O[1]"
+            if test "$TESTROOT" = "$__ENVFLD_L[1]"
+                if test "$__ENVFLD_H[1]" -eq 1
+                    set -gx TESTROOT "$__ENVFLD_O[1]"
                 else
                     set -e TESTROOT
                 end
@@ -36,15 +36,15 @@ function benchmark
             for j in $VAR_INDICES
                 set -l vname $VARNAMES[$j]
                 if set -q $vname
-                    set __ENVSCP_H[$j] 1
-                    set __ENVSCP_O[$j] "$$vname"
+                    set __ENVFLD_H[$j] 1
+                    set __ENVFLD_O[$j] "$$vname"
                 else
-                    set __ENVSCP_H[$j] 0
+                    set __ENVFLD_H[$j] 0
                 end
 
-                if test "$$vname" = "$__ENVSCP_L[$j]"
-                    if test "$__ENVSCP_H[$j]" -eq 1
-                        set -gx $vname "$__ENVSCP_O[$j]"
+                if test "$$vname" = "$__ENVFLD_L[$j]"
+                    if test "$__ENVFLD_H[$j]" -eq 1
+                        set -gx $vname "$__ENVFLD_O[$j]"
                     else
                         set -e $vname
                     end

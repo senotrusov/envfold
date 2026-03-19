@@ -1,7 +1,7 @@
 #!/usr/bin/env zsh
 
 # Set up strict mode unless explicitly disabled
-if [[ "${ENVSCP_TEST_STRICT:-1}" == "1" ]]; then
+if [[ "${ENVFLD_TEST_STRICT:-1}" == "1" ]]; then
   setopt NO_UNSET ERR_EXIT PIPE_FAIL
 fi
 
@@ -10,7 +10,7 @@ export HOME="$(pwd)/test"
 
 FAILURES=0
 
-echo "ZSH: Running Error Handling Tests (Strict: ${ENVSCP_TEST_STRICT:-1})"
+echo "ZSH: Running Error Handling Tests (Strict: ${ENVFLD_TEST_STRICT:-1})"
 
 # Helper function to assert errors report correctly.
 # Command substitution output=$(...) will trigger ERR_EXIT if it fails in strict mode.
@@ -20,7 +20,7 @@ assert_error() {
   local expected_err="$3"
   
   local output code
-  if output=$(bin/envscope -c "$conf_file" hook zsh 2>&1 >/dev/null); then
+  if output=$(bin/envfold -c "$conf_file" hook zsh 2>&1 >/dev/null); then
     code=0
   else
     code=$?
@@ -43,7 +43,7 @@ assert_error_output_empty() {
   local conf_file="$2"
   
   local stdout_output
-  stdout_output=$(bin/envscope -c "$conf_file" hook zsh 2>/dev/null) || true
+  stdout_output=$(bin/envfold -c "$conf_file" hook zsh 2>/dev/null) || true
   
   if [[ -n "$stdout_output" ]]; then
     echo "FAIL: $name - expected empty stdout on error, got: $stdout_output"
@@ -109,17 +109,17 @@ ORIGINAL_PATH="$PATH"
 # Source the generated hook using the newly built binary
 # This simulates zshrc loading.
 # The script claims to be `set -u` compatible, which is active here.
-source <(bin/envscope -c test/test.conf hook zsh)
+source <(bin/envfold -c test/test.conf hook zsh)
 
 # 2. Outside of any managed zone
 cd "$HOME/other"
-__envscope_hook
+__envfold_hook
 assert_empty "LOCALVAR outside" "${LOCALVAR:-}"
 assert_eq "ROOT_VAR active everywhere" "${ROOT_VAR:-}" "root-zone"
 
 # 3. Enter zone_0
 cd "$HOME/test"
-__envscope_hook
+__envfold_hook
 assert_eq "TESTROOT in zone_0" "${TESTROOT:-}" "testroot-value"
 assert_eq "LOCALVAR in zone_0" "${LOCALVAR:-}" "test"
 assert_eq "QUOTED_VAR in zone_0" "${QUOTED_VAR:-}" "val'withquote"
@@ -150,26 +150,26 @@ fi
 
 # 4. Enter zone_1 (nested)
 cd "$HOME/test/foo"
-__envscope_hook
+__envfold_hook
 assert_eq "LOCALVAR in zone_1" "${LOCALVAR:-}" "test-foo"
 assert_eq "TESTROOT in zone_1" "${TESTROOT:-}" "now-with-prefix-testroot-value"
 assert_eq "PATH in zone_1" "${PATH:-}" "$HOME/prefix-that-does-not-exist:$ORIGINAL_PATH"
 
 # 5. Enter zone_2 (deepest)
 cd "$HOME/test/foo/bar"
-__envscope_hook
+__envfold_hook
 assert_eq "LOCALVAR in zone_2" "${LOCALVAR:-}" "test-foo-bar"
 
 # 4a. Enter zone_1 again (nested)
 cd "$HOME/test/foo"
-__envscope_hook
+__envfold_hook
 assert_eq "LOCALVAR in zone_1" "${LOCALVAR:-}" "test-foo"
 assert_eq "TESTROOT in zone_1" "${TESTROOT:-}" "now-with-prefix-testroot-value"
 assert_eq "PATH in zone_1" "${PATH:-}" "${HOME}/prefix-that-does-not-exist:$ORIGINAL_PATH"
 
 # 6. Leave all zones (restore to outer)
 cd "$HOME/other"
-__envscope_hook
+__envfold_hook
 assert_empty "LOCALVAR restored" "${LOCALVAR:-}"
 assert_empty "TESTROOT restored" "${TESTROOT:-}"
 assert_empty "QUOTED_VAR restored" "${QUOTED_VAR:-}"
@@ -183,7 +183,7 @@ assert_eq "PATH restored" "${PATH:-}" "$ORIGINAL_PATH"
 
 # 7. Re-enter zone_0 to verify caching behavior
 cd "$HOME/test"
-__envscope_hook
+__envfold_hook
 
 if [[ "${DATE_VAR:-}" == "$FIRST_DATE_VAR" ]]; then
   echo "FAIL: DATE_VAR did not change (expected dynamic re-evaluation, got '$FIRST_DATE_VAR')"
@@ -199,56 +199,56 @@ assert_eq "DATE_VAR_CACHED remains cached" "${DATE_VAR_CACHED:-}" "$FIRST_DATE_V
 export LOCALVAR="manual-override"
 # Leave the zone
 cd "$HOME/other"
-__envscope_hook
+__envfold_hook
 # The manual override should be preserved (not reverted to empty)
 assert_eq "LOCALVAR manual override protected" "${LOCALVAR:-}" "manual-override"
 
 # 9. Tilde expansion in PATH
 cd "$HOME/test/tilde"
-__envscope_hook
+__envfold_hook
 assert_eq "Tilde after colon in PATH" "${PATH:-}" "$HOME/bin:/usr/bin:$HOME/local/bin:$HOME"
 
 # 10. Absolute path zone
 cd /
-__envscope_hook
+__envfold_hook
 assert_eq "ROOT_VAR set in /" "${ROOT_VAR:-}" "root-zone"
 
 # Go to a subdirectory of /
 cd /etc
-__envscope_hook
+__envfold_hook
 assert_eq "ROOT_VAR remains set in /etc" "${ROOT_VAR:-}" "root-zone"
 
 # Re-enter a relative zone to make sure everything still works
 cd "$HOME/test"
-__envscope_hook
+__envfold_hook
 assert_eq "LOCALVAR in zone_0 after /" "${LOCALVAR:-}" "test"
 assert_eq "ROOT_VAR is set in zone_0" "${ROOT_VAR:-}" "root-zone"
 
 # 11. Multiple folders
 cd "$HOME/test/multi-1"
-__envscope_hook
+__envfold_hook
 assert_eq "MULTI_VAR in multi-1" "${MULTI_VAR:-}" "applied-to-both"
 
 cd "$HOME/test/multi-2"
-__envscope_hook
+__envfold_hook
 assert_eq "MULTI_VAR in multi-2" "${MULTI_VAR:-}" "applied-to-both"
 
 # 12. Wildcard path
 cd "$HOME/test/wildcard/foo/bar"
-__envscope_hook
+__envfold_hook
 assert_eq "WILDCARD_VAR in wildcard/foo/bar" "${WILDCARD_VAR:-}" "matched"
 
 cd "$HOME/test/wildcard/another/bar"
-__envscope_hook
+__envfold_hook
 assert_eq "WILDCARD_VAR in wildcard/another/bar" "${WILDCARD_VAR:-}" "matched"
 
 cd "$HOME/test/wildcard/foo/bar/deep"
-__envscope_hook
+__envfold_hook
 assert_eq "WILDCARD_VAR inherited in deep" "${WILDCARD_VAR:-}" "matched"
 
 # 13. Verify variables from multiple folders and wildcards correctly restore upon exit
 cd "$HOME/other"
-__envscope_hook
+__envfold_hook
 assert_empty "MULTI_VAR restored" "${MULTI_VAR:-}"
 assert_empty "WILDCARD_VAR restored" "${WILDCARD_VAR:-}"
 

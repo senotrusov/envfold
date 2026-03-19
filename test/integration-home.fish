@@ -30,23 +30,23 @@ end
 
 echo "FISH: Running Home / No-Root Integration Tests"
 
-bin/envscope -c test/home.conf hook fish | source
+bin/envfold -c test/home.conf hook fish | source
 
 cd /tmp
-__envscope_hook
+__envfold_hook
 assert_empty "HOME_VAR outside" "$HOME_VAR"
 
 cd "$HOME"
-__envscope_hook
+__envfold_hook
 assert_eq "HOME_VAR in ~" "$HOME_VAR" "home-base"
 
 cd "$HOME/sub"
-__envscope_hook
+__envfold_hook
 assert_eq "HOME_VAR inherited in sub" "$HOME_VAR" "home-base"
 assert_eq "SUB_VAR in sub" "$SUB_VAR" "sub-level"
 
 cd /etc
-__envscope_hook
+__envfold_hook
 assert_empty "HOME_VAR restored" "$HOME_VAR"
 assert_empty "SUB_VAR restored" "$SUB_VAR"
 

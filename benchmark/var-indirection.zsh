@@ -3,7 +3,7 @@ zmodload zsh/datetime
 
 ITERATIONS=100000
 VARNAMES=(TESTROOT)
-__ENVSCP_L=("")
+__ENVFLD_L=("")
 
 benchmark() {
     local TYPE=$1
@@ -13,16 +13,16 @@ benchmark() {
     local i j vname
     
     for ((i=0; i<ITERATIONS; i++)); do
-        __ENVSCP_H=()
-        __ENVSCP_O=()
+        __ENVFLD_H=()
+        __ENVFLD_O=()
         
         if [[ "$TYPE" == "hardcoded" ]]; then
             # Logic: Check if set
-            [[ -n "${TESTROOT+x}" ]] && { __ENVSCP_H[1]=1; __ENVSCP_O[1]="$TESTROOT"; } || __ENVSCP_H[1]=0
+            [[ -n "${TESTROOT+x}" ]] && { __ENVFLD_H[1]=1; __ENVFLD_O[1]="$TESTROOT"; } || __ENVFLD_H[1]=0
             # Comparison
-            if [[ "${TESTROOT:-}" == "${__ENVSCP_L[1]:-}" ]]; then
-                if [[ ${__ENVSCP_H[1]:-0} -eq 1 ]]; then
-                    export TESTROOT="${__ENVSCP_O[1]:-}"
+            if [[ "${TESTROOT:-}" == "${__ENVFLD_L[1]:-}" ]]; then
+                if [[ ${__ENVFLD_H[1]:-0} -eq 1 ]]; then
+                    export TESTROOT="${__ENVFLD_O[1]:-}"
                 else
                     unset TESTROOT
                 fi
@@ -34,15 +34,15 @@ benchmark() {
                 vname="${VARNAMES[$j]}"
                 # Zsh way to check if indirect var is set: ${(P)+vname}
                 if (( ${(P)+vname} )); then
-                    __ENVSCP_H[$j]=1
-                    __ENVSCP_O[$j]="${(P)vname}"
+                    __ENVFLD_H[$j]=1
+                    __ENVFLD_O[$j]="${(P)vname}"
                 else
-                    __ENVSCP_H[$j]=0
+                    __ENVFLD_H[$j]=0
                 fi
                 
-                if [[ "${(P)vname:-}" == "${__ENVSCP_L[$j]:-}" ]]; then
-                    if [[ ${__ENVSCP_H[$j]:-0} -eq 1 ]]; then
-                        export "$vname"="${__ENVSCP_O[$j]:-}"
+                if [[ "${(P)vname:-}" == "${__ENVFLD_L[$j]:-}" ]]; then
+                    if [[ ${__ENVFLD_H[$j]:-0} -eq 1 ]]; then
+                        export "$vname"="${__ENVFLD_O[$j]:-}"
                     else
                         unset "$vname"
                     fi

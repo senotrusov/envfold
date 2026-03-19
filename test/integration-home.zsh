@@ -1,6 +1,6 @@
 #!/usr/bin/env zsh
 
-if [[ "${ENVSCP_TEST_STRICT:-1}" == "1" ]]; then
+if [[ "${ENVFLD_TEST_STRICT:-1}" == "1" ]]; then
   setopt NO_UNSET ERR_EXIT PIPE_FAIL
 fi
 
@@ -32,29 +32,29 @@ assert_empty() {
   fi
 }
 
-echo "ZSH: Running Home Integration Tests (Strict: ${ENVSCP_TEST_STRICT:-1})"
+echo "ZSH: Running Home Integration Tests (Strict: ${ENVFLD_TEST_STRICT:-1})"
 
-source <(bin/envscope -c test/home.conf hook zsh)
+source <(bin/envfold -c test/home.conf hook zsh)
 
 # 1. Start outside managed zones (e.g., /tmp)
 cd /tmp
-__envscope_hook
+__envfold_hook
 assert_empty "HOME_VAR outside" "${HOME_VAR:-}"
 
 # 2. Enter home (.)
 cd "$HOME"
-__envscope_hook
+__envfold_hook
 assert_eq "HOME_VAR in ~" "${HOME_VAR:-}" "home-base"
 
 # 3. Enter sub (implicitly resolves to ~/sub relative to .)
 cd "$HOME/sub"
-__envscope_hook
+__envfold_hook
 assert_eq "HOME_VAR inherited in sub" "${HOME_VAR:-}" "home-base"
 assert_eq "SUB_VAR in sub" "${SUB_VAR:-}" "sub-level"
 
 # 4. Leave to /etc (leaving all zones)
 cd /etc
-__envscope_hook
+__envfold_hook
 assert_empty "HOME_VAR restored" "${HOME_VAR:-}"
 assert_empty "SUB_VAR restored" "${SUB_VAR:-}"
 

@@ -1,7 +1,7 @@
-__ENVSCP_ZONE=${__ENVSCP_ZONE:-"NONE"}
-declare -a __ENVSCP_C 2>/dev/null || true
+__ENVFLD_ZONE=${__ENVFLD_ZONE:-"NONE"}
+declare -a __ENVFLD_C 2>/dev/null || true
 
-declare -a __ENVSCP_VARS=(
+declare -a __ENVFLD_VARS=(
   "TESTROOT"
   "LOCALVAR"
   "DATE_VAR"
@@ -18,37 +18,37 @@ declare -a __ENVSCP_VARS=(
   "ROOT_VAR"
 )
 
-__envscope_save_outer() {
-  __ENVSCP_H=()
-  __ENVSCP_O=()
-  for i in "${!__ENVSCP_VARS[@]}"; do
-    local v="${__ENVSCP_VARS[$i]}"
+__envfold_save_outer() {
+  __ENVFLD_H=()
+  __ENVFLD_O=()
+  for i in "${!__ENVFLD_VARS[@]}"; do
+    local v="${__ENVFLD_VARS[$i]}"
     if [[ -n "${!v+x}" ]]; then
-      __ENVSCP_H[$i]=1
-      __ENVSCP_O[$i]="${!v}"
+      __ENVFLD_H[$i]=1
+      __ENVFLD_O[$i]="${!v}"
     else
-      __ENVSCP_H[$i]=0
+      __ENVFLD_H[$i]=0
     fi
   done
 }
 
-__envscope_restore_outer() {
-  for i in "${!__ENVSCP_VARS[@]}"; do
-    local v="${__ENVSCP_VARS[$i]}"
-    if [[ "${!v:-}" == "${__ENVSCP_L[$i]:-}" ]]; then
-      if [[ ${__ENVSCP_H[$i]:-0} -eq 1 ]]; then
-        export "$v"="${__ENVSCP_O[$i]:-}"
+__envfold_restore_outer() {
+  for i in "${!__ENVFLD_VARS[@]}"; do
+    local v="${__ENVFLD_VARS[$i]}"
+    if [[ "${!v:-}" == "${__ENVFLD_L[$i]:-}" ]]; then
+      if [[ ${__ENVFLD_H[$i]:-0} -eq 1 ]]; then
+        export "$v"="${__ENVFLD_O[$i]:-}"
       else
         if [[ -n "${!v+x}" ]]; then
           unset "$v"
-          echo "envscope: removed $v" >&2
+          echo "envfold: removed $v" >&2
         fi
       fi
     fi
   done
 }
 
-declare -A __ENVSCP_PARENT=(
+declare -A __ENVFLD_PARENT=(
   [zone_1]="zone_0"
   [zone_2]="zone_1"
   [zone_3]="zone_1"
@@ -58,82 +58,82 @@ declare -A __ENVSCP_PARENT=(
   [zone_7]="zone_1"
 )
 
-__envscope_apply_one_zone() {
+__envfold_apply_one_zone() {
   local zone="$1"
   case "$zone" in
     zone_0)
       export ROOT_VAR='root-zone'
-      echo "envscope: added ROOT_VAR" >&2
+      echo "envfold: added ROOT_VAR" >&2
       ;;
     zone_1)
       export TESTROOT='testroot-value'
-      echo "envscope: added TESTROOT" >&2
+      echo "envfold: added TESTROOT" >&2
       export LOCALVAR='test'
-      echo "envscope: added LOCALVAR" >&2
+      echo "envfold: added LOCALVAR" >&2
       export DATE_VAR=$(eval 'od -vAn -N4 -tx4 < /dev/urandom')
-      echo "envscope: added DATE_VAR" >&2
-      if [[ -z "${__ENVSCP_C[0]:-}" ]]; then
-        __ENVSCP_C[0]=$(eval 'od -vAn -N4 -tx4 < /dev/urandom')
+      echo "envfold: added DATE_VAR" >&2
+      if [[ -z "${__ENVFLD_C[0]:-}" ]]; then
+        __ENVFLD_C[0]=$(eval 'od -vAn -N4 -tx4 < /dev/urandom')
       fi
-      export DATE_VAR_CACHED="${__ENVSCP_C[0]}"
-      echo "envscope: added DATE_VAR_CACHED" >&2
+      export DATE_VAR_CACHED="${__ENVFLD_C[0]}"
+      echo "envfold: added DATE_VAR_CACHED" >&2
       export QUOTED_VAR='val'\''withquote'
-      echo "envscope: added QUOTED_VAR" >&2
+      echo "envfold: added QUOTED_VAR" >&2
       export SPACED_VAR='val  spaced'
-      echo "envscope: added SPACED_VAR" >&2
+      echo "envfold: added SPACED_VAR" >&2
       export TILDE_VAR='/home/user/foo'
-      echo "envscope: added TILDE_VAR" >&2
+      echo "envfold: added TILDE_VAR" >&2
       export TILDE_VAR_EXACT='/home/foo'
-      echo "envscope: added TILDE_VAR_EXACT" >&2
+      echo "envfold: added TILDE_VAR_EXACT" >&2
       export TILDE_VAR_MID='a~/foo'
-      echo "envscope: added TILDE_VAR_MID" >&2
+      echo "envfold: added TILDE_VAR_MID" >&2
       export TILDE_PATH_NOT_PATH=':/bin:~/foo'
-      echo "envscope: added TILDE_PATH_NOT_PATH" >&2
+      echo "envfold: added TILDE_PATH_NOT_PATH" >&2
       ;;
     zone_2)
       export PATH='/home/user/prefix-that-does-not-exist':"${PATH:-}"
-      echo "envscope: added PATH" >&2
+      echo "envfold: added PATH" >&2
       export TESTROOT='now-with-prefix-'"${TESTROOT:-}"
-      echo "envscope: added TESTROOT" >&2
+      echo "envfold: added TESTROOT" >&2
       export LOCALVAR='test-foo'
-      echo "envscope: added LOCALVAR" >&2
+      echo "envfold: added LOCALVAR" >&2
       ;;
     zone_3)
       export PATH='/home/user/bin:/usr/bin:/home/user/local/bin:/home/foo'
-      echo "envscope: added PATH" >&2
+      echo "envfold: added PATH" >&2
       ;;
     zone_4)
       export LOCALVAR='test-foo-bar'
-      echo "envscope: added LOCALVAR" >&2
+      echo "envfold: added LOCALVAR" >&2
       ;;
     zone_5)
       export MULTI_VAR='applied-to-both'
-      echo "envscope: added MULTI_VAR" >&2
+      echo "envfold: added MULTI_VAR" >&2
       ;;
     zone_6)
       export MULTI_VAR='applied-to-both'
-      echo "envscope: added MULTI_VAR" >&2
+      echo "envfold: added MULTI_VAR" >&2
       ;;
     zone_7)
       export WILDCARD_VAR='matched'
-      echo "envscope: added WILDCARD_VAR" >&2
+      echo "envfold: added WILDCARD_VAR" >&2
       ;;
   esac
 }
 
-__envscope_apply_stack() {
+__envfold_apply_stack() {
   local zone_id="$1"
   local stack=()
   while [[ -n "$zone_id" && "$zone_id" != "NONE" ]]; do
     stack=("$zone_id" "${stack[@]}")
-    zone_id="${__ENVSCP_PARENT[$zone_id]:-NONE}"
+    zone_id="${__ENVFLD_PARENT[$zone_id]:-NONE}"
   done
   for z in "${stack[@]}"; do
-    __envscope_apply_one_zone "$z"
+    __envfold_apply_one_zone "$z"
   done
 }
 
-__envscope_hook() {
+__envfold_hook() {
   local target_zone="NONE"
   local current_pwd="${PWD:-}"
   current_pwd="${current_pwd%/}/"
@@ -148,32 +148,32 @@ __envscope_hook() {
     '/'* ) target_zone="zone_0" ;;
   esac
 
-  if [[ "$target_zone" != "${__ENVSCP_ZONE:-NONE}" ]]; then
-    if [[ "${__ENVSCP_ZONE:-NONE}" != "NONE" ]]; then
-      __envscope_restore_outer
+  if [[ "$target_zone" != "${__ENVFLD_ZONE:-NONE}" ]]; then
+    if [[ "${__ENVFLD_ZONE:-NONE}" != "NONE" ]]; then
+      __envfold_restore_outer
     fi
     if [[ "$target_zone" != "NONE" ]]; then
-      if [[ "${__ENVSCP_ZONE:-NONE}" == "NONE" ]]; then
-        __envscope_save_outer
+      if [[ "${__ENVFLD_ZONE:-NONE}" == "NONE" ]]; then
+        __envfold_save_outer
       fi
-      __envscope_apply_stack "$target_zone"
-      __ENVSCP_L=()
-      for i in "${!__ENVSCP_VARS[@]}"; do
-        local v="${__ENVSCP_VARS[$i]}"
-        __ENVSCP_L[$i]="${!v:-}"
+      __envfold_apply_stack "$target_zone"
+      __ENVFLD_L=()
+      for i in "${!__ENVFLD_VARS[@]}"; do
+        local v="${__ENVFLD_VARS[$i]}"
+        __ENVFLD_L[$i]="${!v:-}"
       done
     else
-      unset __ENVSCP_L __ENVSCP_O __ENVSCP_H
+      unset __ENVFLD_L __ENVFLD_O __ENVFLD_H
     fi
-    __ENVSCP_ZONE="$target_zone"
+    __ENVFLD_ZONE="$target_zone"
   fi
 }
 
 # Attach to PROMPT_COMMAND using '|| true' to bypass 'set -e' if declare fails.
-if [[ ! "${PROMPT_COMMAND:-}" =~ __envscope_hook ]] && [[ "${PROMPT_COMMAND[*]:-}" != *__envscope_hook* ]]; then
+if [[ ! "${PROMPT_COMMAND:-}" =~ __envfold_hook ]] && [[ "${PROMPT_COMMAND[*]:-}" != *__envfold_hook* ]]; then
   if [[ "$(declare -p PROMPT_COMMAND 2>/dev/null || true)" =~ "declare -a" ]]; then
-    PROMPT_COMMAND+=("__envscope_hook")
+    PROMPT_COMMAND+=("__envfold_hook")
   else
-    PROMPT_COMMAND="${PROMPT_COMMAND:+${PROMPT_COMMAND}; }__envscope_hook"
+    PROMPT_COMMAND="${PROMPT_COMMAND:+${PROMPT_COMMAND}; }__envfold_hook"
   fi
 fi

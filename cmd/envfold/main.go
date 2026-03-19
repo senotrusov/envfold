@@ -59,25 +59,25 @@ func main() {
 
 	args := flag.Args()
 	if len(args) < 2 || args[0] != "hook" {
-		fmt.Fprintln(os.Stderr, "envscope: Usage: envscope [-c config] [-reportvars] hook <bash|zsh|fish>")
+		fmt.Fprintln(os.Stderr, "envfold: Usage: envfold [-c config] [-reportvars] hook <bash|zsh|fish>")
 		os.Exit(1)
 	}
 	shell := args[1]
 
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "envscope: error getting home dir: %v\n", err)
+		fmt.Fprintf(os.Stderr, "envfold: error getting home dir: %v\n", err)
 		os.Exit(1)
 	}
 
 	configPath := *configFlag
 	if configPath == "" {
-		configPath = filepath.Join(homeDir, ".config", "envscope", "main.conf")
+		configPath = filepath.Join(homeDir, ".config", "envfold", "main.conf")
 	}
 
 	zones, allVars, err := parseConfig(configPath, homeDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "envscope: error parsing config: %v\n", err)
+		fmt.Fprintf(os.Stderr, "envfold: error parsing config: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -94,7 +94,7 @@ func resolveZonePath(path, homeDir string) string {
 	return filepath.Join(homeDir, path)
 }
 
-// parseConfig reads the envscope configuration, constructs Zone definitions,
+// parseConfig reads the envfold configuration, constructs Zone definitions,
 // and builds the parent-child hierarchy between them.
 func parseConfig(configPath, homeDir string) ([]Zone, []string, error) {
 	file, err := os.Open(configPath)
@@ -389,7 +389,7 @@ func generateHook(shell string, zones []Zone, allVars []string, report bool) {
 	case "fish":
 		generateFish(&builder, zones, allVars, report)
 	default:
-		fmt.Fprintf(os.Stderr, "envscope: unsupported shell %q\n", shell)
+		fmt.Fprintf(os.Stderr, "envfold: unsupported shell %q\n", shell)
 		os.Exit(1)
 	}
 

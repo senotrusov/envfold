@@ -1,49 +1,49 @@
-if not set -q __ENVSCP_ZONE
-  set -g __ENVSCP_ZONE "NONE"
+if not set -q __ENVFLD_ZONE
+  set -g __ENVFLD_ZONE "NONE"
 end
-set -g -a __ENVSCP_C
+set -g -a __ENVFLD_C
 
-set -g __ENVSCP_VARS "TESTROOT" "LOCALVAR" "DATE_VAR" "DATE_VAR_CACHED" "QUOTED_VAR" "SPACED_VAR" "TILDE_VAR" "TILDE_VAR_EXACT" "TILDE_VAR_MID" "TILDE_PATH_NOT_PATH" "PATH" "MULTI_VAR" "WILDCARD_VAR" "ROOT_VAR"
+set -g __ENVFLD_VARS "TESTROOT" "LOCALVAR" "DATE_VAR" "DATE_VAR_CACHED" "QUOTED_VAR" "SPACED_VAR" "TILDE_VAR" "TILDE_VAR_EXACT" "TILDE_VAR_MID" "TILDE_PATH_NOT_PATH" "PATH" "MULTI_VAR" "WILDCARD_VAR" "ROOT_VAR"
 
-function __envscope_save_outer
-  set -g __ENVSCP_H
-  set -g __ENVSCP_O
-  if test (count $__ENVSCP_VARS) -eq 0
+function __envfold_save_outer
+  set -g __ENVFLD_H
+  set -g __ENVFLD_O
+  if test (count $__ENVFLD_VARS) -eq 0
     return
   end
-  for i in (seq 1 (count $__ENVSCP_VARS))
-    set -l v $__ENVSCP_VARS[$i]
+  for i in (seq 1 (count $__ENVFLD_VARS))
+    set -l v $__ENVFLD_VARS[$i]
     if set -q $v
-      set -a __ENVSCP_H 1
-      set -a __ENVSCP_O (string join ":" $$v)
+      set -a __ENVFLD_H 1
+      set -a __ENVFLD_O (string join ":" $$v)
     else
-      set -a __ENVSCP_H 0
-      set -a __ENVSCP_O ""
+      set -a __ENVFLD_H 0
+      set -a __ENVFLD_O ""
     end
   end
 end
 
-function __envscope_restore_outer
-  if test (count $__ENVSCP_VARS) -eq 0
+function __envfold_restore_outer
+  if test (count $__ENVFLD_VARS) -eq 0
     return
   end
-  for i in (seq 1 (count $__ENVSCP_VARS))
-    set -l v $__ENVSCP_VARS[$i]
+  for i in (seq 1 (count $__ENVFLD_VARS))
+    set -l v $__ENVFLD_VARS[$i]
     set -l current_val ""
     if set -q $v
       set current_val (string join ":" $$v)
     end
     set -l last_val ""
-    if set -q __ENVSCP_L[$i]
-      set last_val $__ENVSCP_L[$i]
+    if set -q __ENVFLD_L[$i]
+      set last_val $__ENVFLD_L[$i]
     end
 
     if test "$current_val" = "$last_val"
-      if test "$__ENVSCP_H[$i]" = "1"
+      if test "$__ENVFLD_H[$i]" = "1"
         if test "$v" = "PATH"
-          set -gx PATH (string split ":" "$__ENVSCP_O[$i]")
+          set -gx PATH (string split ":" "$__ENVFLD_O[$i]")
         else
-          set -gx $v "$__ENVSCP_O[$i]"
+          set -gx $v "$__ENVFLD_O[$i]"
         end
       else
         set -e $v
@@ -52,7 +52,7 @@ function __envscope_restore_outer
   end
 end
 
-function __envscope_get_parent
+function __envfold_get_parent
   switch "$argv[1]"
     case zone_1
       echo "zone_0"
@@ -73,7 +73,7 @@ function __envscope_get_parent
   end
 end
 
-function __envscope_apply_one_zone
+function __envfold_apply_one_zone
   set -l zone "$argv[1]"
   switch "$zone"
     case zone_0
@@ -82,10 +82,10 @@ function __envscope_apply_one_zone
       set -gx TESTROOT 'testroot-value'
       set -gx LOCALVAR 'test'
       set -gx DATE_VAR (eval 'od -vAn -N4 -tx4 < /dev/urandom')
-      if not set -q __ENVSCP_C[1]
-        set -g __ENVSCP_C[1] (eval 'od -vAn -N4 -tx4 < /dev/urandom')
+      if not set -q __ENVFLD_C[1]
+        set -g __ENVFLD_C[1] (eval 'od -vAn -N4 -tx4 < /dev/urandom')
       end
-      set -gx DATE_VAR_CACHED "$__ENVSCP_C[1]"
+      set -gx DATE_VAR_CACHED "$__ENVFLD_C[1]"
       set -gx QUOTED_VAR 'val\'withquote'
       set -gx SPACED_VAR 'val  spaced'
       set -gx TILDE_VAR '/home/user/foo'
@@ -109,19 +109,19 @@ function __envscope_apply_one_zone
   end
 end
 
-function __envscope_apply_stack
+function __envfold_apply_stack
   set -l zone_id "$argv[1]"
   set -l stack
   while test -n "$zone_id" -a "$zone_id" != "NONE"
     set stack $zone_id $stack
-    set zone_id (__envscope_get_parent "$zone_id")
+    set zone_id (__envfold_get_parent "$zone_id")
   end
   for z in $stack
-    __envscope_apply_one_zone "$z"
+    __envfold_apply_one_zone "$z"
   end
 end
 
-function __envscope_hook --on-event fish_prompt
+function __envfold_hook --on-event fish_prompt
   set -l target_zone "NONE"
   set -l current_pwd "$PWD"
   set current_pwd (string replace -r '/+$' '' -- "$current_pwd")/
@@ -144,31 +144,31 @@ function __envscope_hook --on-event fish_prompt
       set target_zone "zone_0"
   end
 
-  if test "$target_zone" != "$__ENVSCP_ZONE"
-    if test "$__ENVSCP_ZONE" != "NONE"
-      __envscope_restore_outer
+  if test "$target_zone" != "$__ENVFLD_ZONE"
+    if test "$__ENVFLD_ZONE" != "NONE"
+      __envfold_restore_outer
     end
     if test "$target_zone" != "NONE"
-      if test "$__ENVSCP_ZONE" = "NONE"
-        __envscope_save_outer
+      if test "$__ENVFLD_ZONE" = "NONE"
+        __envfold_save_outer
       end
-      __envscope_apply_stack "$target_zone"
-      set -g __ENVSCP_L
-      if test (count $__ENVSCP_VARS) -gt 0
-        for i in (seq 1 (count $__ENVSCP_VARS))
-          set -l v $__ENVSCP_VARS[$i]
+      __envfold_apply_stack "$target_zone"
+      set -g __ENVFLD_L
+      if test (count $__ENVFLD_VARS) -gt 0
+        for i in (seq 1 (count $__ENVFLD_VARS))
+          set -l v $__ENVFLD_VARS[$i]
           if set -q $v
-            set -a __ENVSCP_L (string join ":" $$v)
+            set -a __ENVFLD_L (string join ":" $$v)
           else
-            set -a __ENVSCP_L ""
+            set -a __ENVFLD_L ""
           end
         end
       end
     else
-      set -e __ENVSCP_L
-      set -e __ENVSCP_O
-      set -e __ENVSCP_H
+      set -e __ENVFLD_L
+      set -e __ENVFLD_O
+      set -e __ENVFLD_H
     end
-    set -g __ENVSCP_ZONE "$target_zone"
+    set -g __ENVFLD_ZONE "$target_zone"
   end
 end

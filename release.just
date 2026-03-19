@@ -7,7 +7,7 @@
 # SPDX-License-Identifier: Apache-2.0 OR MIT
 
 # Set the project name
-project := "envscope"
+project := "envfold"
 
 # Retrieve the GPG signing key from the Git configuration if possible
 signingkey := `git config --get user.signingkey || true`

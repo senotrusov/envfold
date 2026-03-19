@@ -25,12 +25,12 @@ func generateZsh(builder *strings.Builder, zones []Zone, allVars []string, repor
 }
 
 func generateZshHeader(builder *strings.Builder) {
-	builder.WriteString("typeset -g __ENVSCP_ZONE=${__ENVSCP_ZONE:-\"NONE\"}\n")
-	builder.WriteString("typeset -g -a __ENVSCP_C 2>/dev/null || true\n\n")
+	builder.WriteString("typeset -g __ENVFLD_ZONE=${__ENVFLD_ZONE:-\"NONE\"}\n")
+	builder.WriteString("typeset -g -a __ENVFLD_C 2>/dev/null || true\n\n")
 }
 
 func generateVarsArrayZsh(builder *strings.Builder, allVars []string) {
-	builder.WriteString("typeset -g -a __ENVSCP_VARS=(\n")
+	builder.WriteString("typeset -g -a __ENVFLD_VARS=(\n")
 	for _, v := range allVars {
 		builder.WriteString(fmt.Sprintf("  \"%s\"\n", v))
 	}
@@ -38,17 +38,17 @@ func generateVarsArrayZsh(builder *strings.Builder, allVars []string) {
 }
 
 func generateSaveFunctionZsh(builder *strings.Builder) {
-	builder.WriteString(`__envscope_save_outer() {
-  __ENVSCP_H=()
-  __ENVSCP_O=()
+	builder.WriteString(`__envfold_save_outer() {
+  __ENVFLD_H=()
+  __ENVFLD_O=()
   local i
-  for i in {1..${#__ENVSCP_VARS[@]}}; do
-    local v="${__ENVSCP_VARS[$i]}"
+  for i in {1..${#__ENVFLD_VARS[@]}}; do
+    local v="${__ENVFLD_VARS[$i]}"
     if [[ -n "${(P)v+x}" ]]; then
-      __ENVSCP_H[$i]=1
-      __ENVSCP_O[$i]="${(P)v}"
+      __ENVFLD_H[$i]=1
+      __ENVFLD_O[$i]="${(P)v}"
     else
-      __ENVSCP_H[$i]=0
+      __ENVFLD_H[$i]=0
     fi
   done
 }
@@ -57,19 +57,19 @@ func generateSaveFunctionZsh(builder *strings.Builder) {
 }
 
 func generateRestoreFunctionZsh(builder *strings.Builder, report bool) {
-	builder.WriteString(`__envscope_restore_outer() {
+	builder.WriteString(`__envfold_restore_outer() {
   local i
-  for i in {1..${#__ENVSCP_VARS[@]}}; do
-    local v="${__ENVSCP_VARS[$i]}"
-    if [[ "${(P)v:-}" == "${__ENVSCP_L[$i]:-}" ]]; then
-      if [[ ${__ENVSCP_H[$i]:-0} -eq 1 ]]; then
-        export "$v"="${__ENVSCP_O[$i]:-}"
+  for i in {1..${#__ENVFLD_VARS[@]}}; do
+    local v="${__ENVFLD_VARS[$i]}"
+    if [[ "${(P)v:-}" == "${__ENVFLD_L[$i]:-}" ]]; then
+      if [[ ${__ENVFLD_H[$i]:-0} -eq 1 ]]; then
+        export "$v"="${__ENVFLD_O[$i]:-}"
       else
 `)
 	if report {
 		builder.WriteString(`        if [[ -n "${(P)v+x}" ]]; then
           unset "$v"
-          echo "envscope: removed $v" >&2
+          echo "envfold: removed $v" >&2
         fi
 `)
 	} else {
@@ -85,7 +85,7 @@ func generateRestoreFunctionZsh(builder *strings.Builder, report bool) {
 }
 
 func generateParentMapZsh(builder *strings.Builder, zones []Zone) {
-	builder.WriteString("typeset -g -A __ENVSCP_PARENT=(\n")
+	builder.WriteString("typeset -g -A __ENVFLD_PARENT=(\n")
 	for _, z := range getSortedZonesByID(zones) {
 		if z.ParentID != -1 {
 			builder.WriteString(fmt.Sprintf("  [%s]=\"%s\"\n", z.Name(), z.ParentName()))
@@ -95,7 +95,7 @@ func generateParentMapZsh(builder *strings.Builder, zones []Zone) {
 }
 
 func generateApplyOneZoneFunctionZsh(builder *strings.Builder, zones []Zone, report bool) {
-	builder.WriteString("__envscope_apply_one_zone() {\n")
+	builder.WriteString("__envfold_apply_one_zone() {\n")
 	builder.WriteString("  local zone=\"$1\"\n")
 	builder.WriteString("  case \"$zone\" in\n")
 	for _, z := range getSortedZonesByID(zones) {
@@ -111,10 +111,10 @@ func generateApplyOneZoneFunctionZsh(builder *strings.Builder, zones []Zone, rep
 
 			if ev.IsDynamic && ev.Cache {
 				cIdx := ev.CacheIndex + 1
-				builder.WriteString(fmt.Sprintf("      if [[ -z \"${__ENVSCP_C[%d]:-}\" ]]; then\n", cIdx))
-				builder.WriteString(fmt.Sprintf("        __ENVSCP_C[%d]=%s\n", cIdx, expr))
+				builder.WriteString(fmt.Sprintf("      if [[ -z \"${__ENVFLD_C[%d]:-}\" ]]; then\n", cIdx))
+				builder.WriteString(fmt.Sprintf("        __ENVFLD_C[%d]=%s\n", cIdx, expr))
 				builder.WriteString("      fi\n")
-				expr = fmt.Sprintf("\"${__ENVSCP_C[%d]}\"", cIdx)
+				expr = fmt.Sprintf("\"${__ENVFLD_C[%d]}\"", cIdx)
 			}
 
 			if ev.Prepend {
@@ -127,7 +127,7 @@ func generateApplyOneZoneFunctionZsh(builder *strings.Builder, zones []Zone, rep
 				builder.WriteString(fmt.Sprintf("      export %s=%s\n", ev.Name, expr))
 			}
 			if report {
-				builder.WriteString(fmt.Sprintf("      echo \"envscope: added %s\" >&2\n", ev.Name))
+				builder.WriteString(fmt.Sprintf("      echo \"envfold: added %s\" >&2\n", ev.Name))
 			}
 		}
 		builder.WriteString("      ;;\n")
@@ -137,16 +137,16 @@ func generateApplyOneZoneFunctionZsh(builder *strings.Builder, zones []Zone, rep
 }
 
 func generateApplyStackFunctionZsh(builder *strings.Builder) {
-	builder.WriteString(`__envscope_apply_stack() {
+	builder.WriteString(`__envfold_apply_stack() {
   local zone_id="$1"
   local stack=()
   while [[ -n "$zone_id" && "$zone_id" != "NONE" ]]; do
     stack=("$zone_id" "${stack[@]}")
-    zone_id="${__ENVSCP_PARENT[$zone_id]:-NONE}"
+    zone_id="${__ENVFLD_PARENT[$zone_id]:-NONE}"
   done
   local z
   for z in "${stack[@]}"; do
-    __envscope_apply_one_zone "$z"
+    __envfold_apply_one_zone "$z"
   done
 }
 
@@ -154,7 +154,7 @@ func generateApplyStackFunctionZsh(builder *strings.Builder) {
 }
 
 func generateHookFunctionZsh(builder *strings.Builder, zones []Zone) {
-	builder.WriteString("__envscope_hook() {\n")
+	builder.WriteString("__envfold_hook() {\n")
 	builder.WriteString("  local target_zone=\"NONE\"\n")
 	builder.WriteString("  local current_pwd=\"${PWD:-}\"\n")
 	builder.WriteString("  current_pwd=\"${current_pwd%/}/\"\n")
@@ -166,31 +166,31 @@ func generateHookFunctionZsh(builder *strings.Builder, zones []Zone) {
 	builder.WriteString("  esac\n\n")
 
 	var lastVarTracker strings.Builder
-	lastVarTracker.WriteString(`      __ENVSCP_L=()
+	lastVarTracker.WriteString(`      __ENVFLD_L=()
       local i
-      for i in {1..${#__ENVSCP_VARS[@]}}; do
-        local v="${__ENVSCP_VARS[$i]}"
-        __ENVSCP_L[$i]="${(P)v:-}"
+      for i in {1..${#__ENVFLD_VARS[@]}}; do
+        local v="${__ENVFLD_VARS[$i]}"
+        __ENVFLD_L[$i]="${(P)v:-}"
       done`)
 
-	builder.WriteString(fmt.Sprintf(`  if [[ "$target_zone" != "${__ENVSCP_ZONE:-NONE}" ]]; then
-    if [[ "${__ENVSCP_ZONE:-NONE}" != "NONE" ]]; then
-      __envscope_restore_outer
+	builder.WriteString(fmt.Sprintf(`  if [[ "$target_zone" != "${__ENVFLD_ZONE:-NONE}" ]]; then
+    if [[ "${__ENVFLD_ZONE:-NONE}" != "NONE" ]]; then
+      __envfold_restore_outer
     fi
     if [[ "$target_zone" != "NONE" ]]; then
-      if [[ "${__ENVSCP_ZONE:-NONE}" == "NONE" ]]; then
-        __envscope_save_outer
+      if [[ "${__ENVFLD_ZONE:-NONE}" == "NONE" ]]; then
+        __envfold_save_outer
       fi
-      __envscope_apply_stack "$target_zone"
+      __envfold_apply_stack "$target_zone"
 %s
     else
-      unset __ENVSCP_L __ENVSCP_O __ENVSCP_H
+      unset __ENVFLD_L __ENVFLD_O __ENVFLD_H
     fi
-    __ENVSCP_ZONE="$target_zone"
+    __ENVFLD_ZONE="$target_zone"
   fi
 }
 
 autoload -Uz add-zsh-hook
-add-zsh-hook precmd __envscope_hook
+add-zsh-hook precmd __envfold_hook
 `, lastVarTracker.String()))
 }
