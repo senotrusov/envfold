@@ -59,6 +59,8 @@ version := `
   printf "%s\n" "$tag"
 `
 
+_default: release
+
 # Print release version
 @version:
   echo {{version}}
