@@ -65,8 +65,13 @@ _default: release
 @version:
   echo {{version}}
 
-# Prepare a full release
-release: ensure-release-tag dist
+# Perform a full release: validate tag, build artifacts, and publish
+release: ensure-release-tag create-dist publish
+
+# Publish a release on GitHub
+publish:
+  git push origin {{version}}
+  gh release create --draft --fail-on-no-commits --generate-notes --title "{{project}} {{version}}" --verify-tag {{version}} dist/*
 
 # Ensure repo is clean and strictly pointed to by an annotated tag
 ensure-release-tag:
@@ -114,7 +119,7 @@ ensure-release-tag:
   fi
 
 # Create distribution artifacts
-dist: clean-dist cross-compile archive-source
+create-dist: clean-dist cross-compile archive-source
   #!/usr/bin/env sh
   set -u # Error on undefined variables
 
